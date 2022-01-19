@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/muxable/ingress/internal/demuxer"
+	"github.com/muxable/ingress/internal/sessionizer"
 	"github.com/muxable/ingress/pkg/codec"
 	"github.com/muxable/rtpio/pkg/rtpio"
 	"github.com/muxable/rtptools/pkg/rfc7005"
@@ -18,7 +19,6 @@ import (
 	"github.com/muxable/transcoder/pkg/transcoder"
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
@@ -108,27 +108,14 @@ func main() {
 	codecs := codec.DefaultCodecSet()
 
 	x_ssrc.NewDemultiplexer(time.Now, rtpReader, rtcpReader, func(ssrc webrtc.SSRC, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader) {
-		go func() {
-			cp := make([]rtcp.Packet, 20)
-			for {
-				_, err := rtcpIn.ReadRTCP(cp)
-				if err != nil {
-					return
-				}
-			}
-		}()
+		go rtpio.DiscardRTCP.ReadRTCPFrom(rtcpIn)
 		demuxer.NewPayloadTypeDemuxer(time.Now, rtpIn, func(pt webrtc.PayloadType, rtpIn rtpio.RTPReader) {
 			// match with a codec.
 			codec, ok := codecs.FindByPayloadType(pt)
 			if !ok {
 				log.Warn().Uint32("SSRC", uint32(ssrc)).Uint8("PayloadType", uint8(pt)).Msg("demuxer unknown payload type")
 				// we do need to consume all the packets though.
-				for {
-					p := &rtp.Packet{}
-					if _, err := rtpIn.ReadRTP(p); err != nil {
-						return
-					}
-				}
+				rtpio.DiscardRTP.ReadRTPFrom(rtpIn)
 			} else {
 				log.Debug().Uint32("SSRC", uint32(ssrc)).Uint8("PayloadType", uint8(pt)).Msg("demuxer found new stream type")
 			}
@@ -163,7 +150,7 @@ func main() {
 							MediaSSRC:  uint32(ssrc),
 							Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
 						}
-						if _, err := rtcpWriter.WriteRTCP([]rtcp.Packet{nack}); err != nil {
+						if err := rtcpWriter.WriteRTCP([]rtcp.Packet{nack}); err != nil {
 							log.Error().Err(err).Msg("failed to write NACK")
 						}
 					case <-done:
@@ -184,8 +171,8 @@ func main() {
 			go func() {
 				prevSeq := uint16(0)
 				for {
-					p := &rtp.Packet{}
-					if _, err := jbRTP.ReadRTP(p); err != nil {
+					p, err := jbRTP.ReadRTP()
+					if err != nil {
 						done <- true
 						return
 					}

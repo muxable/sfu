@@ -120,7 +120,7 @@ func (d *CNAMEDemuxer) handleRTCP(p *rtcp.Packet) {
 
 // cleanup removes any cname sources that haven't received a packet in the last 30 seconds
 func (d *CNAMEDemuxer) cleanup() {
-	now := d.ctx.Clock.Now()
+	now := d.clock()
 	for cname, s := range d.byCNAME {
 		if now.Sub(s.lastPacket) > 30*time.Second && cname != "mugit" {
 			// log the removal

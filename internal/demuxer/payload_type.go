@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/muxable/rtpio/pkg/rtpio"
-	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 )
 
@@ -32,8 +31,8 @@ func NewPayloadTypeDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, onNewP
 		defer ticker.Stop()
 		defer func() { done <- true }()
 		for {
-			p := &rtp.Packet{}
-			if _, err := rtpIn.ReadRTP(p); err != nil {
+			p, err := rtpIn.ReadRTP()
+			if err != nil {
 				// close all the rtp writers.
 				for _, s := range d.byPayloadType {
 					s.rtpWriter.Close()

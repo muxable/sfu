@@ -3,7 +3,6 @@ module github.com/muxable/ingress
 go 1.17
 
 require (
-	github.com/benbjohnson/clock v1.3.0
 	github.com/muxable/rtpio v0.1.1
 	github.com/muxable/rtptools v0.1.1
 	github.com/muxable/transcoder v0.2.2
@@ -19,6 +18,7 @@ require (
 )
 
 require (
+	github.com/benbjohnson/clock v1.3.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/ebml-go/ebml v0.0.0-20160925193348-ca8851a10894 // indirect
