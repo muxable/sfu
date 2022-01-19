@@ -9,7 +9,7 @@ import (
 
 	"github.com/muxable/ingress/pkg/clock"
 	"github.com/muxable/rtpio/pkg/rtpio"
-	"github.com/muxable/rtptools/pkg/rfc8698"
+	"github.com/muxable/rtptools/pkg/rfc8698/ecn"
 	"github.com/muxable/rtptools/pkg/rfc8888"
 	"github.com/muxable/rtptools/pkg/x_time"
 	"github.com/pion/rtcp"
@@ -48,7 +48,7 @@ var udpOOBSize = func() int {
 
 // NewSessionizer wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
 func NewSessionizer(conn *net.UDPConn, mtu int) (rtpio.RTPReader, rtpio.RTCPReader, rtpio.RTCPWriter) {
-	rfc8698.EnableExplicitCongestionNotification(conn)
+	ecn.EnableExplicitCongestionNotification(conn)
 
 	rtpReader, rtpWriter := rtpio.RTPPipe()
 	rtcpReader, rtcpWriter := rtpio.RTCPPipe()
@@ -125,7 +125,7 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (rtpio.RTPReader, rtpio.RTCPRead
 					// not a valid rtp/rtcp packet.
 					continue
 				}
-				if _, err := rtpWriter.WriteRTP(p); err != nil {
+				if err := rtpWriter.WriteRTP(p); err != nil {
 					continue
 				}
 				ssrc := webrtc.SSRC(p.SSRC)
@@ -133,7 +133,7 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (rtpio.RTPReader, rtpio.RTCPRead
 				m.sources[ssrc] = sender
 
 				// log this with congestion control.
-				ecn, err := rfc8698.CheckExplicitCongestionNotification(oob[:oobn])
+				ecn, err := ecn.CheckExplicitCongestionNotification(oob[:oobn])
 				if err != nil {
 					log.Error().Err(err).Msg("failed to check ecn")
 					m.Unlock()
@@ -214,19 +214,20 @@ func (m *SSRCManager) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) 
 			}
 		}
 	}
-	if _, err := m.rtcpWriter.WriteRTCP(cp); err != nil {
+	if err := m.rtcpWriter.WriteRTCP(cp); err != nil {
 		return err
 	}
 	return nil
 }
 
 // Write writes to the connection sending to only senders that have sent to that ssrc.
-func (m *SSRCManager) WriteRTCP(pkts []rtcp.Packet) (int, error) {
+func (m *SSRCManager) WriteRTCP(pkts []rtcp.Packet) error {
 	buf, err := rtcp.Marshal(pkts)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	m.RLock()
+	defer m.RUnlock()
 	for _, p := range pkts {
 		for _, ssrc := range p.DestinationSSRC() {
 			// forward this packet to that ssrc's source.
@@ -237,6 +238,5 @@ func (m *SSRCManager) WriteRTCP(pkts []rtcp.Packet) (int, error) {
 			}
 		}
 	}
-	m.RUnlock()
-	return len(pkts), nil
+	return nil
 }

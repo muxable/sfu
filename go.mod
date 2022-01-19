@@ -4,7 +4,7 @@ go 1.17
 
 require (
 	github.com/muxable/rtpio v0.1.1
-	github.com/muxable/rtptools v0.1.1
+	github.com/muxable/rtptools v0.1.3
 	github.com/muxable/transcoder v0.2.2
 	github.com/pion/ion-sdk-go v0.7.0
 	github.com/pion/rtcp v1.2.9
