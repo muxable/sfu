@@ -8,7 +8,7 @@ import (
 )
 
 type PayloadTypeSource struct {
-	rtpWriter  rtpio.RTPWriteCloser
+	rtpio.RTPWriteCloser
 	lastPacket time.Time
 }
 
@@ -35,7 +35,7 @@ func NewPayloadTypeDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, onNewP
 			if err != nil {
 				// close all the rtp writers.
 				for _, s := range d.byPayloadType {
-					s.rtpWriter.Close()
+					s.Close()
 				}
 				return
 			}
@@ -44,12 +44,12 @@ func NewPayloadTypeDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, onNewP
 			s, ok := d.byPayloadType[pt]
 			if !ok {
 				r, w := rtpio.RTPPipe()
-				s = &PayloadTypeSource{rtpWriter: w}
+				s = &PayloadTypeSource{RTPWriteCloser: w}
 				d.byPayloadType[pt] = s
 				go onNewPayloadType(pt, r)
 			}
 			s.lastPacket = d.clock()
-			s.rtpWriter.WriteRTP(p)
+			s.WriteRTP(p)
 		}
 	}()
 
@@ -73,7 +73,7 @@ func (d *PayloadTypeDemuxer) cleanup() {
 			// log the removal
 			delete(d.byPayloadType, pt)
 			// close the output channels
-			s.rtpWriter.Close()
+			s.Close()
 		}
 	}
 }

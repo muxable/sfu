@@ -3,17 +3,19 @@ package demuxer
 import (
 	"time"
 
+	"github.com/muxable/rtpio/pkg/rtpio"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 )
 
 type CNAMEDemuxer struct {
 	clock func() time.Time
 
-	rtpIn    chan *rtp.Packet
-	rtcpIn   chan *rtcp.Packet
-	callback func(*CNAMESource)
+	rtpIn    rtpio.RTPReader
+	rtcpIn   rtpio.RTCPReader
+	callback func(string, rtpio.RTPReader, rtpio.RTCPReader)
 
 	bySSRC  map[uint32]*CNAMESource
 	byCNAME map[string]*CNAMESource
@@ -21,14 +23,14 @@ type CNAMEDemuxer struct {
 
 type CNAMESource struct {
 	CNAME string
-	RTP   chan *rtp.Packet
-	RTCP  chan *rtcp.Packet
+	rtpio.RTPWriteCloser
+	rtpio.RTCPWriteCloser
 
 	lastPacket time.Time
 }
 
 // NewCNAMEDemuxer creates a new CNAMEDemuxer
-func NewCNAMEDemuxer(clock func() time.Time, rtpIn chan *rtp.Packet, rtcpIn chan *rtcp.Packet, callback func(*CNAMESource)) {
+func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader, callback func(string, rtpio.RTPReader, rtpio.RTCPReader)) {
 	d := &CNAMEDemuxer{
 		clock:    clock,
 		rtpIn:    rtpIn,
@@ -37,15 +39,6 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn chan *rtp.Packet, rtcpIn chan
 		bySSRC:   make(map[uint32]*CNAMESource),
 		byCNAME:  make(map[string]*CNAMESource),
 	}
-
-	// if debug mode is on, add a default cname to make testing easier.
-	s := &CNAMESource{
-		CNAME: "mugit",
-		RTP:   make(chan *rtp.Packet),
-		RTCP:  make(chan *rtcp.Packet),
-	}
-	go d.callback(s)
-	d.byCNAME["mugit"] = s
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -68,14 +61,14 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn chan *rtp.Packet, rtcpIn chan
 }
 
 // handleRTP checks if the RTP's SSRC is registered and if so, forwards it on to that source
-func (d *CNAMEDemuxer) handleRTP(p *rtp.Packet) {
-	if s, ok := d.bySSRC[p.SSRC]; ok {
-		s.lastPacket = d.clock()
-		s.RTP <- p
-	} else {
-		// log.Warn().Uint32("SSRC", p.SSRC).Msg("ssrc received with unknown cname")
-		d.byCNAME["mugit"].RTP <- p
+func (d *CNAMEDemuxer) handleRTP(p *rtp.Packet) error {
+	s, ok := d.bySSRC[p.SSRC]
+	if !ok {
+		zap.L().Warn("ssrc received with unknown cname", zap.Uint32("ssrc", p.SSRC))
+		return nil
 	}
+	s.lastPacket = d.clock()
+	return s.WriteRTP(p)
 }
 
 // handleRTCP registers a given SSRC to a CNAMESource.
@@ -133,8 +126,8 @@ func (d *CNAMEDemuxer) cleanup() {
 				}
 			}
 			// close the output channels
-			close(s.RTP)
-			close(s.RTCP)
+			s.RTPWriteCloser.Close()
+			s.RTCPWriteCloser.Close()
 		}
 	}
 }

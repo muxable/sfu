@@ -82,17 +82,24 @@ func main() {
 
 	log.Printf("listening on %s", udpAddr)
 
-	rtpReader, rtcpReader, rtcpWriter := sessionizer.NewSessionizer(conn, 1500)
+	srv := sessionizer.NewSessionizer(conn, 1500)
 
-	senderSSRC := rand.Uint32()
+	for {
+		conn, err := srv.Accept()
+		if err != nil {
+			panic(err)
+		}
 
-	connector := sdk.NewConnector(*to)
-	rtc := sdk.NewRTC(connector, sdk.DefaultConfig)
+		senderSSRC := rand.Uint32()
 
-	rid := "mugit"
+		connector := sdk.NewConnector(*to)
+		rtc := sdk.NewRTC(connector, sdk.DefaultConfig)
 
-	if err := rtc.Join(rid, sdk.RandomKey(4), sdk.NewJoinConfig().SetNoSubscribe()); err != nil {
-		panic(err)
+		rid := "mugit"
+
+		if err := rtc.Join(rid, sdk.RandomKey(4), sdk.NewJoinConfig().SetNoSubscribe()); err != nil {
+			panic(err)
+		}
 	}
 
 	tcConn, err := grpc.Dial("transcode.mtun.io:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))

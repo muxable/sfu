@@ -2,6 +2,7 @@ package sessionizer
 
 import (
 	"encoding/binary"
+	"io"
 	"math/rand"
 	"net"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/muxable/rtpio/pkg/rtpio"
 	"github.com/muxable/rtptools/pkg/rfc8698/ecn"
 	"github.com/muxable/rtptools/pkg/rfc8888"
+	"github.com/muxable/rtptools/pkg/x_ssrc"
 	"github.com/muxable/rtptools/pkg/x_time"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
@@ -25,7 +27,7 @@ type ccfb struct {
 	sender *net.UDPAddr
 }
 
-type SSRCManager struct {
+type Sessionizer struct {
 	sync.RWMutex
 	rtpio.RTCPWriter
 
@@ -35,6 +37,7 @@ type SSRCManager struct {
 	ccfb map[string]*ccfb
 
 	rtcpWriter rtpio.RTCPWriter
+	sessionCh  chan *Session
 }
 
 var udpOOBSize = func() int {
@@ -47,17 +50,18 @@ var udpOOBSize = func() int {
 }()
 
 // NewSessionizer wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
-func NewSessionizer(conn *net.UDPConn, mtu int) (rtpio.RTPReader, rtpio.RTCPReader, rtpio.RTCPWriter) {
+func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 	ecn.EnableExplicitCongestionNotification(conn)
 
 	rtpReader, rtpWriter := rtpio.RTPPipe()
 	rtcpReader, rtcpWriter := rtpio.RTCPPipe()
 
-	m := &SSRCManager{
+	m := &Sessionizer{
 		conn:       conn,
 		sources:    make(map[webrtc.SSRC]*net.UDPAddr),
 		ccfb:       make(map[string]*ccfb),
 		rtcpWriter: rtcpWriter,
+		sessionCh:  make(chan *Session),
 	}
 
 	ccTicker := time.NewTicker(100 * time.Millisecond)
@@ -165,10 +169,26 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (rtpio.RTPReader, rtpio.RTCPRead
 			}
 		}
 	}()
-	return rtpReader, rtcpReader, m
+	go x_ssrc.NewDemultiplexer(time.Now, rtpReader, rtcpReader, func(ssrc webrtc.SSRC, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader) {
+		m.sessionCh <- &Session{
+			SSRC:       ssrc,
+			RTPReader:  rtpIn,
+			RTCPReader: rtcpIn,
+			RTCPWriter: m,
+		}
+	})
+	return m, nil
 }
 
-func (m *SSRCManager) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) error {
+func (m *Sessionizer) Accept() (*Session, error) {
+	session, ok := <-m.sessionCh
+	if !ok {
+		return nil, io.EOF
+	}
+	return session, nil
+}
+
+func (m *Sessionizer) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) error {
 	// it's an rtcp packet.
 	cp, err := rtcp.Unmarshal(buf)
 	if err != nil {
@@ -221,7 +241,7 @@ func (m *SSRCManager) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) 
 }
 
 // Write writes to the connection sending to only senders that have sent to that ssrc.
-func (m *SSRCManager) WriteRTCP(pkts []rtcp.Packet) error {
+func (m *Sessionizer) WriteRTCP(pkts []rtcp.Packet) error {
 	buf, err := rtcp.Marshal(pkts)
 	if err != nil {
 		return err
@@ -239,4 +259,11 @@ func (m *SSRCManager) WriteRTCP(pkts []rtcp.Packet) error {
 		}
 	}
 	return nil
+}
+
+type Session struct {
+	webrtc.SSRC
+	rtpio.RTPReader
+	rtpio.RTCPReader
+	rtpio.RTCPWriter
 }
