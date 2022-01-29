@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"time"
@@ -17,10 +18,13 @@ import (
 )
 
 type RTPServer struct {
+	trackCh chan *NamedTrackLocal
 }
 
 func NewRTPServer() *RTPServer {
-	return &RTPServer{}
+	return &RTPServer{
+		trackCh: make(chan *NamedTrackLocal),
+	}
 }
 
 func (s *RTPServer) Serve(conn *net.UDPConn) error {
@@ -95,7 +99,7 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 
 				log.Info().Str("CNAME", "").Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("new inbound stream")
 
-				tid := fmt.Sprintf("%s-%d-%d", "mugit", source.SSRC, pt)
+				tid := fmt.Sprintf("%s-%d-%d", cname, source.SSRC, pt)
 				track, err := webrtc.NewTrackLocalStaticRTP(codec.RTPCodecCapability, tid, tid)
 				if err != nil {
 					log.Error().Err(err).Msg("failed to create track")
@@ -119,9 +123,23 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 						}
 					}
 				}()
+
+				s.trackCh <- &NamedTrackLocal{
+					TrackLocal: track,
+					Name:       cname,
+				}
 			})
 		})
 	}
+}
+
+// AcceptTrackLocal returns a track that can be sent to a peer connection.
+func (s *RTPServer) AcceptTrackLocal() (*NamedTrackLocal, error) {
+	ntl, ok := <-s.trackCh
+	if !ok {
+		return nil, io.EOF
+	}
+	return ntl, nil
 }
 
 var _ UDPServer = (*RTPServer)(nil)

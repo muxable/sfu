@@ -7,7 +7,7 @@ import (
 )
 
 type TrackProducer interface {
-	AcceptTrackLocal() (webrtc.TrackLocal, error)
+	AcceptTrackLocal() (*NamedTrackLocal, error)
 }
 
 type TCPServer interface {
@@ -16,4 +16,10 @@ type TCPServer interface {
 
 type UDPServer interface {
 	Serve(*net.UDPConn) error
+}
+
+type NamedTrackLocal struct {
+	webrtc.TrackLocal
+
+	Name string
 }
