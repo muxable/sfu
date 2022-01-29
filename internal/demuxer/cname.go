@@ -15,8 +15,6 @@ type CNAMEDemuxer struct {
 
 	clock func() time.Time
 
-	onNewCNAME func(string, rtpio.RTPReader, rtpio.RTCPReader)
-
 	bySSRC map[webrtc.SSRC]*CNAMESource
 }
 
@@ -32,7 +30,7 @@ type CNAMESource struct {
 
 // NewCNAMEDemuxer creates a new CNAMEDemuxer
 func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader, onNewCNAME func(string, rtpio.RTPReader, rtpio.RTCPReader)) {
-	d := &CNAMEDemuxer{clock: clock}
+	d := &CNAMEDemuxer{clock: clock, bySSRC: make(map[webrtc.SSRC]*CNAMESource)}
 
 	ticker := time.NewTicker(time.Second)
 	done := make(chan bool, 1)
@@ -106,7 +104,7 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio
 							RTCPWriteCloser: rtcpWriter,
 							lastPacket:      d.clock(),
 						}
-						go d.onNewCNAME(cname, rtpReader, rtcpReader)
+						go onNewCNAME(cname, rtpReader, rtcpReader)
 
 						zap.L().Info("new cname", zap.String("cname", cname), zap.Uint32("ssrc", uint32(ssrc)))
 					}
