@@ -5,7 +5,7 @@ go 1.17
 require (
 	github.com/muxable/rtpio v0.1.1
 	github.com/muxable/rtptools v0.1.4
-	github.com/muxable/transcoder v0.2.2
+	github.com/muxable/transcoder v0.3.0
 	github.com/pion/ion-sdk-go v0.7.0
 	github.com/pion/rtcp v1.2.9
 	github.com/pion/rtp v1.7.4
@@ -52,11 +52,11 @@ require (
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
-	golang.org/x/crypto v0.0.0-20211215165025-cf75a172585e // indirect
+	golang.org/x/crypto v0.0.0-20220112180741-5e0467b6c7ce // indirect
 	golang.org/x/sys v0.0.0-20220114195835-da31bd327af9 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.3.7 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
-	google.golang.org/genproto v0.0.0-20220111164026-67b88f271998 // indirect
+	google.golang.org/genproto v0.0.0-20220118154757-00ab72f36ad5 // indirect
 	google.golang.org/protobuf v1.27.1 // indirect
 )
