@@ -86,6 +86,8 @@ func main() {
 			break
 		}
 
+		zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
+
 		transcodedRemote, err := tc.Transcode(tl)
 		if err != nil {
 			zap.L().Error("failed to transcode", zap.Error(err))

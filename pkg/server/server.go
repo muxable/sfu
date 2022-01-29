@@ -19,7 +19,7 @@ type UDPServer interface {
 }
 
 type NamedTrackLocal struct {
-	webrtc.TrackLocal
+	*webrtc.TrackLocalStaticRTP
 
 	Name string
 }
