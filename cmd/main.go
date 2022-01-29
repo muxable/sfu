@@ -101,7 +101,7 @@ func main() {
 		}
 
 		rtc := sdk.NewRTC(connector, sdk.DefaultConfig)
-		if err := rtc.Join(tl.Name, tl.Name, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
+		if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
 			zap.L().Error("failed to join", zap.Error(err))
 			continue
 		}

@@ -21,5 +21,6 @@ type UDPServer interface {
 type NamedTrackLocal struct {
 	*webrtc.TrackLocalStaticRTP
 
-	Name string
+	CNAME   string
+	TrackID string
 }

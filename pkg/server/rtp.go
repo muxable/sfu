@@ -126,7 +126,8 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 
 				s.trackCh <- &NamedTrackLocal{
 					TrackLocalStaticRTP: track,
-					Name:       cname,
+					CNAME:               cname,
+					TrackID:             tid,
 				}
 			})
 		})
