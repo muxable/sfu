@@ -109,7 +109,7 @@ func main() {
 			zap.L().Error("failed to publish", zap.Error(err))
 			continue
 		}
-		zap.L().Info("published", zap.String("name", tl.Name))
+		zap.L().Info("published", zap.String("id", transcodedLocal.ID()))
 	}
 }
 
