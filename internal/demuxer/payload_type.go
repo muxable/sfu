@@ -3,7 +3,7 @@ package demuxer
 import (
 	"time"
 
-	"github.com/muxable/rtpio/pkg/rtpio"
+	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
 )
 
