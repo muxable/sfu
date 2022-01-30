@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func resolveTranscoder(addr string) (*transcoder.Client) {
+func resolveTranscoder(addr string) *transcoder.Client {
 	if addr == "" {
 		return nil
 	}
@@ -87,7 +87,7 @@ func main() {
 
 		zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
 
-		rtc := sdk.NewRTC(connector, sdk.DefaultConfig)
+		rtc := sdk.NewRTC(connector)
 		if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
 			zap.L().Error("failed to join", zap.Error(err))
 			continue
@@ -99,7 +99,7 @@ func main() {
 			}
 			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
 		} else {
-			transcodedRemote, err := tc.Transcode(tl)
+			transcodedRemote, err := tc.Transcode(tl, transcoder.ToMimeType(webrtc.MimeTypeVP8))
 			if err != nil {
 				zap.L().Error("failed to transcode", zap.Error(err))
 				continue
@@ -112,6 +112,7 @@ func main() {
 				zap.L().Error("failed to pipe", zap.Error(err))
 				continue
 			}
+
 			if _, err := rtc.Publish(transcodedLocal); err != nil {
 				zap.L().Error("failed to publish", zap.Error(err))
 				continue
