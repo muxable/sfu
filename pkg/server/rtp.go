@@ -57,8 +57,6 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 					return
 				}
 				log.Debug().Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("demuxer found new stream type")
-				codecTicker := codec.Ticker()
-				defer codecTicker.Stop()
 				jb, jbRTP := rfc7005.NewJitterBuffer(codec.ClockRate, 1*time.Second, rtpIn)
 				// write nacks periodically back to the sender
 				nackTicker := time.NewTicker(100 * time.Millisecond)

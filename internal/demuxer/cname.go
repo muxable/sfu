@@ -25,7 +25,6 @@ type CNAMESource struct {
 	rtpio.RTCPWriteCloser
 
 	lastPacket time.Time
-	closed     bool
 }
 
 // NewCNAMEDemuxer creates a new CNAMEDemuxer
@@ -55,6 +54,7 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio
 			s, ok := d.bySSRC[webrtc.SSRC(p.SSRC)]
 			if !ok {
 				zap.L().Warn("received packet for unknown ssrc", zap.Uint32("ssrc", uint32(p.SSRC)))
+				d.Unlock()
 				continue
 			}
 			// forward to this source.
@@ -92,25 +92,20 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio
 					}
 
 					d.Lock()
-					// check if there's already a cname source created for this cname.
-					source, ok := d.byCNAME(cname)
-					if !ok {
+					s, ok := d.bySSRC[webrtc.SSRC(ssrc)]
+					if !ok || s.CNAME != cname {
 						// create a new cname source.
 						rtpReader, rtpWriter := rtpio.RTPPipe()
 						rtcpReader, rtcpWriter := rtpio.RTCPPipe()
-						source = &CNAMESource{
+						go onNewCNAME(cname, rtpReader, rtcpReader)
+						zap.L().Info("new cname", zap.String("cname", cname), zap.Uint32("ssrc", uint32(ssrc)))
+						d.bySSRC[webrtc.SSRC(ssrc)] = &CNAMESource{
 							CNAME:           cname,
 							RTPWriteCloser:  rtpWriter,
 							RTCPWriteCloser: rtcpWriter,
 							lastPacket:      d.clock(),
 						}
-						go onNewCNAME(cname, rtpReader, rtcpReader)
-
-						zap.L().Info("new cname", zap.String("cname", cname), zap.Uint32("ssrc", uint32(ssrc)))
 					}
-
-					// assign the source to the ssrc.
-					d.bySSRC[webrtc.SSRC(ssrc)] = source
 					d.Unlock()
 				}
 			}
@@ -160,15 +155,13 @@ func (d *CNAMEDemuxer) cleanup() {
 
 	now := d.clock()
 	for ssrc, s := range d.bySSRC {
-		if now.Sub(s.lastPacket) > 30*time.Second || s.closed {
+		if now.Sub(s.lastPacket) > 30*time.Second {
 			// log the removal
 			zap.L().Info("removing cname source", zap.String("cname", s.CNAME), zap.Uint32("ssrc", uint32(ssrc)))
 			delete(d.bySSRC, ssrc)
-			if !s.closed {
-				// close the output channels
-				s.RTPWriteCloser.Close()
-				s.RTCPWriteCloser.Close()
-			}
+			// close the output channels
+			s.RTPWriteCloser.Close()
+			s.RTCPWriteCloser.Close()
 		}
 	}
 }

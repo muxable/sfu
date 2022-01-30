@@ -19,16 +19,23 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// The overall pipeline follows the following architecture:
-// - receiver
-// - cname demuxer
-// - normalizer
-// - jitter buffer + nack emitter
-// - pt demuxer
-// - depacketizer
-// - transcoder
-// - pt muxer (implicit)
-// - sender
+func resolveTranscoder(addr string) (*transcoder.Client) {
+	if addr == "" {
+		return nil
+	}
+	tcConn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		panic(err)
+	}
+
+	tc, err := transcoder.NewClient(context.Background(), tcConn)
+	if err != nil {
+		panic(err)
+	}
+
+	return tc
+}
+
 func main() {
 	logger, err := zap.NewDevelopment()
 	if err != nil {
@@ -60,18 +67,10 @@ func main() {
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
 	// rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
 	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
-	tcAddr := flag.String("transcode", "transcode.mtun.io:50051", "The address of the transcoder")
+	tcAddr := flag.String("transcode", "", "The address of the transcoder")
 	flag.Parse()
 
-	tcConn, err := grpc.Dial(*tcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(err)
-	}
-
-	tc, err := transcoder.NewClient(context.Background(), tcConn)
-	if err != nil {
-		panic(err)
-	}
+	tc := resolveTranscoder(*tcAddr)
 
 	tlCh := make(chan *server.NamedTrackLocal)
 
@@ -88,32 +87,41 @@ func main() {
 
 		zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
 
-		transcodedRemote, err := tc.Transcode(tl)
-		if err != nil {
-			zap.L().Error("failed to transcode", zap.Error(err))
-			continue
-		}
-
-		transcodedLocal, err := pipe(transcodedRemote)
-		if err != nil {
-			zap.L().Error("failed to pipe", zap.Error(err))
-			continue
-		}
-
 		rtc := sdk.NewRTC(connector, sdk.DefaultConfig)
 		if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
 			zap.L().Error("failed to join", zap.Error(err))
 			continue
 		}
-		if _, err := rtc.Publish(transcodedLocal); err != nil {
-			zap.L().Error("failed to publish", zap.Error(err))
-			continue
+		if tc == nil {
+			if _, err := rtc.Publish(tl); err != nil {
+				zap.L().Error("failed to publish", zap.Error(err))
+				continue
+			}
+			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
+		} else {
+			transcodedRemote, err := tc.Transcode(tl)
+			if err != nil {
+				zap.L().Error("failed to transcode", zap.Error(err))
+				continue
+			}
+
+			transcodedLocal, err := pipe(transcodedRemote)
+
+			zap.L().Info("transcoded", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
+			if err != nil {
+				zap.L().Error("failed to pipe", zap.Error(err))
+				continue
+			}
+			if _, err := rtc.Publish(transcodedLocal); err != nil {
+				zap.L().Error("failed to publish", zap.Error(err))
+				continue
+			}
+			zap.L().Info("published", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
 		}
-		zap.L().Info("published", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME))
 	}
 }
 
-func pipe(tr *webrtc.TrackRemote) (webrtc.TrackLocal, error) {
+func pipe(tr *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
 	tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID())
 	if err != nil {
 		return nil, err
@@ -130,7 +138,6 @@ func pipe(tr *webrtc.TrackRemote) (webrtc.TrackLocal, error) {
 		}
 	}()
 	return tl, nil
-
 }
 
 func runRTPServer(addr string, out chan *server.NamedTrackLocal) error {
