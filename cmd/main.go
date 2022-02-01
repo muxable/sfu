@@ -99,7 +99,7 @@ func main() {
 			}
 			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
 		} else {
-			transcodedRemote, err := tc.Transcode(tl, transcoder.ToMimeType(webrtc.MimeTypeH264))
+			transcodedRemote, err := tc.Transcode(tl)
 			if err != nil {
 				zap.L().Error("failed to transcode", zap.Error(err))
 				continue
