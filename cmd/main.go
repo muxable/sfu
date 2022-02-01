@@ -99,7 +99,7 @@ func main() {
 			}
 			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
 		} else {
-			transcodedRemote, err := tc.Transcode(tl, transcoder.ToMimeType(webrtc.MimeTypeVP8))
+			transcodedRemote, err := tc.Transcode(tl, transcoder.ToMimeType(webrtc.MimeTypeH264))
 			if err != nil {
 				zap.L().Error("failed to transcode", zap.Error(err))
 				continue
@@ -131,9 +131,11 @@ func pipe(tr *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
 		for {
 			p, _, err := tr.ReadRTP()
 			if err != nil {
+				log.Printf("failed to read rtp: %v", err)
 				return
 			}
 			if err := tl.WriteRTP(p); err != nil {
+				log.Printf("failed to write rtp: %v", err)
 				return
 			}
 		}
