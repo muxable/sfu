@@ -9,7 +9,6 @@ import (
 
 	"github.com/muxable/ingress/pkg/server"
 	"github.com/muxable/transcoder/pkg/transcoder"
-	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/webrtc/v3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
@@ -66,60 +65,60 @@ func main() {
 
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
 	// rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
-	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
-	tcAddr := flag.String("transcode", "", "The address of the transcoder")
+	// toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
+	// tcAddr := flag.String("transcode", "", "The address of the transcoder")
 	flag.Parse()
 
-	tc := resolveTranscoder(*tcAddr)
+	// tc := resolveTranscoder(*tcAddr)
 
 	tlCh := make(chan *server.NamedTrackLocal)
 
-	connector := sdk.NewConnector(*toAddr)
+	// connector := sdk.NewConnector(*toAddr)
 
 	go runRTPServer(*rtpAddr, tlCh)
 	// go runRTMPServer(*rtmpAddr, tlCh)
 
-	for {
-		tl, ok := <-tlCh
-		if !ok {
-			break
-		}
+	// for {
+	// 	tl, ok := <-tlCh
+	// 	if !ok {
+	// 		break
+	// 	}
 
-		zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
+	// 	zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
 
-		rtc := sdk.NewRTC(connector)
-		if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
-			zap.L().Error("failed to join", zap.Error(err))
-			continue
-		}
-		if tc == nil {
-			if _, err := rtc.Publish(tl); err != nil {
-				zap.L().Error("failed to publish", zap.Error(err))
-				continue
-			}
-			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
-		} else {
-			transcodedRemote, err := tc.Transcode(tl)
-			if err != nil {
-				zap.L().Error("failed to transcode", zap.Error(err))
-				continue
-			}
+	// 	rtc := sdk.NewRTC(connector)
+	// 	if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
+	// 		zap.L().Error("failed to join", zap.Error(err))
+	// 		continue
+	// 	}
+	// 	if tc == nil {
+	// 		if _, err := rtc.Publish(tl); err != nil {
+	// 			zap.L().Error("failed to publish", zap.Error(err))
+	// 			continue
+	// 		}
+	// 		zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
+	// 	} else {
+	// 		transcodedRemote, err := tc.Transcode(tl)
+	// 		if err != nil {
+	// 			zap.L().Error("failed to transcode", zap.Error(err))
+	// 			continue
+	// 		}
 
-			transcodedLocal, err := pipe(transcodedRemote)
+	// 		transcodedLocal, err := pipe(transcodedRemote)
 
-			zap.L().Info("transcoded", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
-			if err != nil {
-				zap.L().Error("failed to pipe", zap.Error(err))
-				continue
-			}
+	// 		zap.L().Info("transcoded", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
+	// 		if err != nil {
+	// 			zap.L().Error("failed to pipe", zap.Error(err))
+	// 			continue
+	// 		}
 
-			if _, err := rtc.Publish(transcodedLocal); err != nil {
-				zap.L().Error("failed to publish", zap.Error(err))
-				continue
-			}
-			zap.L().Info("published", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
-		}
-	}
+	// 		if _, err := rtc.Publish(transcodedLocal); err != nil {
+	// 			zap.L().Error("failed to publish", zap.Error(err))
+	// 			continue
+	// 		}
+	// 		zap.L().Info("published", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
+	// 	}
+	// }
 }
 
 func pipe(tr *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
