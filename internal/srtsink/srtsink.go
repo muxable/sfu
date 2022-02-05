@@ -10,6 +10,7 @@ import (
 	"net"
 	"unsafe"
 
+	"github.com/pion/rtp/codecs"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/rs/zerolog/log"
 )
@@ -39,21 +40,31 @@ func NewSRTSink(in rtpio.RTPReader) error {
 	if err != nil {
 		return err
 	}
+	videoDepacketizer := &codecs.H265Packet{}
+	audioDepacketizer := &codecs.OpusPacket{}
 	for {
 		p, err := in.ReadRTP()
 		if err != nil {
 			return err
 		}
-		buf, err := p.Marshal()
+		pbuf, err := p.Marshal()
 		if err != nil {
 			return err
 		}
 		switch p.PayloadType {
 		case 106: // h265
+			buf, err := videoDepacketizer.Unmarshal(pbuf)
+			if err != nil {
+				return err
+			}
 			if _, err := videoConn.Write(buf); err != nil {
 				return err
 			}
 		case 111: // opus
+			buf, err := audioDepacketizer.Unmarshal(pbuf)
+			if err != nil {
+				return err
+			}
 			if _, err := audioConn.Write(buf); err != nil {
 				return err
 			}
