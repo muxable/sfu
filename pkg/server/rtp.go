@@ -9,6 +9,7 @@ import (
 
 	"github.com/muxable/ingress/internal/demuxer"
 	"github.com/muxable/ingress/internal/sessionizer"
+	"github.com/muxable/ingress/internal/srtsink"
 	"github.com/muxable/ingress/pkg/codec"
 	"github.com/muxable/rtptools/pkg/rfc7005"
 	"github.com/pion/rtcp"
@@ -34,6 +35,9 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 	}
 
 	codecs := codec.DefaultCodecSet()
+
+	r, w := rtpio.RTPPipe()
+	go srtsink.NewSRTSink(r)
 
 	for {
 		// source represents a unique ssrc
@@ -121,6 +125,9 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 					}
 					prevSeq = p.SequenceNumber
 					if err := track.WriteRTP(p); err != nil {
+						log.Warn().Err(err).Msg("failed to write sample")
+					}
+					if err := w.WriteRTP(p); err != nil {
 						log.Warn().Err(err).Msg("failed to write sample")
 					}
 				}
