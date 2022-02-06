@@ -75,7 +75,7 @@ func main() {
 
 	// connector := sdk.NewConnector(*toAddr)
 
-	go runRTPServer(*rtpAddr, tlCh)
+	runRTPServer(*rtpAddr, tlCh)
 	// go runRTMPServer(*rtmpAddr, tlCh)
 
 	// for {

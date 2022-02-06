@@ -36,7 +36,7 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 	codecs := codec.DefaultCodecSet()
 
 	r, w := rtpio.RTPPipe()
-	go srtsink.NewSRTSink(r)
+	go log.Printf("%v", srtsink.NewSRTSink(r))
 
 	for {
 		// source represents a unique ssrc
