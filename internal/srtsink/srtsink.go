@@ -68,10 +68,19 @@ func NewSRTSink(in rtpio.RTPReader) error {
 				}
 
 				sink.Lock()
-				for _, s := range sink.videoSinks {
-					if _, err := s.Write(sample.Data); err != nil {
-						log.Error().Err(err).Msg("error sending video packet")
+				data := sample.Data
+				for len(data) > 0 {
+					chunk := len(data)
+					if chunk > 1316 {
+						chunk = 1316
 					}
+					for _, s := range sink.videoSinks {
+						log.Printf("writing %x", data[:chunk])
+						if _, err := s.Write(data[:chunk]); err != nil {
+							log.Error().Err(err).Msg("error sending video packet")
+						}
+					}
+					data = data[chunk:]
 				}
 				sink.Unlock()
 			}
@@ -84,10 +93,18 @@ func NewSRTSink(in rtpio.RTPReader) error {
 				}
 
 				sink.Lock()
-				for _, s := range sink.audioSinks {
-					if _, err := s.Write(sample.Data); err != nil {
-						log.Error().Err(err).Msg("error sending audio packet")
+				data := sample.Data
+				for len(data) > 0 {
+					chunk := len(data)
+					if chunk > 1316 {
+						chunk = 1316
 					}
+					for _, s := range sink.audioSinks {
+						if _, err := s.Write(data[:chunk]); err != nil {
+							log.Error().Err(err).Msg("error sending audio packet")
+						}
+					}
+					data = data[chunk:]
 				}
 				sink.Unlock()
 			}

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -8,7 +9,6 @@ import (
 
 	"github.com/muxable/ingress/internal/demuxer"
 	"github.com/muxable/ingress/internal/sessionizer"
-	"github.com/muxable/ingress/internal/srtsink"
 	"github.com/muxable/ingress/pkg/codec"
 	"github.com/muxable/rtptools/pkg/rfc7005"
 	"github.com/pion/rtcp"
@@ -35,8 +35,8 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 
 	codecs := codec.DefaultCodecSet()
 
-	r, w := rtpio.RTPPipe()
-	go log.Printf("%v", srtsink.NewSRTSink(r))
+	// r, w := rtpio.RTPPipe()
+	// go srtsink.NewSRTSink(r)
 
 	for {
 		// source represents a unique ssrc
@@ -100,18 +100,23 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 
 				log.Info().Str("CNAME", "").Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("new inbound stream")
 
-				// tid := fmt.Sprintf("%s-%d-%d", cname, source.SSRC, pt)
-				// track, err := webrtc.NewTrackLocalStaticRTP(codec.RTPCodecCapability, tid, tid)
-				// if err != nil {
-				// 	log.Error().Err(err).Msg("failed to create track")
-				// 	return
-				// }
+				tid := fmt.Sprintf("%s-%d-%d", cname, source.SSRC, pt)
+				track, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{
+					MimeType: codec.MimeType,
+					ClockRate: codec.ClockRate,
+					Channels: codec.Channels,
+					SDPFmtpLine: "sprop-vps=QAEMAf//AWAAAAMAkAAAAwAAAwA/ugJA,sprop-sps=QgEBAWAAAAMAkAAAAwAAAwA/oAoIDxZbpKTC//AAEAAQEAAAAwAQAAADAeCA,sprop-pps=RAHAcYES",
+				}, tid, tid)
+				if err != nil {
+					log.Error().Err(err).Msg("failed to create track")
+					return
+				}
 
-				// s.trackCh <- &NamedTrackLocal{
-				// 	TrackLocalStaticRTP: track,
-				// 	CNAME:               cname,
-				// 	TrackID:             tid,
-				// }
+				s.trackCh <- &NamedTrackLocal{
+					TrackLocalStaticRTP: track,
+					CNAME:               cname,
+					TrackID:             tid,
+				}
 				
 				prevSeq := uint16(0)
 				for {
@@ -123,10 +128,7 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 						log.Warn().Uint16("PrevSeq", prevSeq).Uint16("CurrSeq", p.SequenceNumber).Msg("missing packet")
 					}
 					prevSeq = p.SequenceNumber
-					// if err := track.WriteRTP(p); err != nil {
-					// 	log.Warn().Err(err).Msg("failed to write sample")
-					// }
-					if err := w.WriteRTP(p); err != nil {
+					if err := track.WriteRTP(p); err != nil {
 						log.Warn().Err(err).Msg("failed to write sample")
 					}
 				}
