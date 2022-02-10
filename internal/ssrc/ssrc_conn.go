@@ -4,17 +4,15 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"sync"
 	"time"
 
-	"github.com/apex/log"
-	"github.com/muxable/ingress/pkg/clock"
 	"github.com/muxable/rtptools/pkg/rfc8698/ecn"
 	"github.com/muxable/rtptools/pkg/rfc8888"
 	"github.com/muxable/rtptools/pkg/x_time"
+	"github.com/muxable/sfu/pkg/clock"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
@@ -49,7 +47,12 @@ var udpOOBSize = func() int {
 }()
 
 // NewSessionizer wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
-func NewSSRCConn(conn *net.UDPConn, mtu int) (*SSRCConn, error) {
+func ListenUDP(addr *net.UDPAddr) (*SSRCConn, error) {
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, err
+	}
+
 	ecn.EnableExplicitCongestionNotification(conn)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,13 +107,9 @@ func NewSSRCConn(conn *net.UDPConn, mtu int) (*SSRCConn, error) {
 }
 
 func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	buf := make([]byte, 1500)
 	oob := make([]byte, udpOOBSize)
-	n, oobn, _, addr, err := s.UDPConn.ReadMsgUDP(buf, oob)
+	n, oobn, _, addr, err := s.UDPConn.ReadMsgUDP(p, oob)
 	if err != nil || !isRTPRTCP(p) {
-		if err == io.EOF {
-			s.cancel()
-		}
 		return n, addr, err
 	}
 	ts := time.Now()
@@ -130,12 +129,12 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		}
 		// if it's a sender clock report, immediately respond with a receiver clock report.
 		// additionally, by contract sender clocks are sent in separate packets so we don't forward.
-		for _, p := range cp {
-			switch p := p.(type) {
+		for _, pkt := range cp {
+			switch pkt := pkt.(type) {
 			case *rtcp.RawPacket:
-				if p.Header().Type == rtcp.TypeTransportSpecificFeedback && p.Header().Count == 29 {
+				if pkt.Header().Type == rtcp.TypeTransportSpecificFeedback && pkt.Header().Count == 29 {
 					senderClockReport := &clock.SenderClock{}
-					if err := senderClockReport.Unmarshal([]byte(*p)[4:]); err != nil {
+					if err := senderClockReport.Unmarshal([]byte(*pkt)[4:]); err != nil {
 						log.Warn().Err(err).Msg("failed to unmarshal sender clock report")
 						break
 					}
@@ -223,4 +222,9 @@ func (s *SSRCConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	default:
 		return s.UDPConn.WriteTo(p, addr)
 	}
+}
+
+func (s *SSRCConn) Close() error {
+	s.cancel()
+	return s.UDPConn.Close()
 }

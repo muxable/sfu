@@ -7,7 +7,7 @@ package server
 // 	"os"
 // 	"sync"
 
-// 	"github.com/muxable/ingress/internal/packetizer"
+// 	"github.com/muxable/sfu/internal/packetizer"
 // 	"github.com/nareix/joy4/av"
 // 	"github.com/nareix/joy4/cgo/ffmpeg"
 // 	"github.com/nareix/joy4/format/rtmp"

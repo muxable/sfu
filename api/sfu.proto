@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+option go_package = "github.com/muxable/sfu/api";
+
+package api;
+
+service SFU {
+  rpc Signal(stream Request) returns (stream Response) {}
+}
+
+message Signal {
+  oneof payload {
+    string offer_sdp = 1;
+    string answer_sdp = 2;
+    string trickle = 3;
+  }
+}
+
+message Request {
+  oneof operation {
+    string subscribe_stream_id = 1;
+    Signal signal = 2;
+  }
+}
+
+message Response {
+    Signal signal = 1;
+}

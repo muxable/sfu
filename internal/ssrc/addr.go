@@ -17,7 +17,7 @@ func (SSRCAddr) Network() string {
 }
 
 func (s SSRCAddr) String() string {
-	return fmt.Sprintf("ssrc:%08x", s)
+	return fmt.Sprintf("ssrc:%08x", uint32(s))
 }
 
 var _ net.Addr = (*SSRCAddr)(nil)
