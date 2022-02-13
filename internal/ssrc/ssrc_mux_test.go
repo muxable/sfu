@@ -12,7 +12,12 @@ import (
 func TestSSRCConn_BasicConnectivity(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ssrcConn, err := ListenUDP(&net.UDPAddr{Port: 4444})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 4444})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ssrcConn, err := NewSSRCMux(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +68,12 @@ func TestSSRCConn_BasicConnectivity(t *testing.T) {
 func TestSSRCConn_TwoSenders_SameSSRC(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ssrcConn, err := ListenUDP(&net.UDPAddr{Port: 4444})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 4444})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ssrcConn, err := NewSSRCMux(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +137,12 @@ func TestSSRCConn_TwoSenders_SameSSRC(t *testing.T) {
 func TestSSRCConn_TwoSenders_DifferentSSRC(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ssrcConn, err := ListenUDP(&net.UDPAddr{Port: 4444})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 4444})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ssrcConn, err := NewSSRCMux(conn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +213,12 @@ func TestSSRCConn_TwoSenders_DifferentSSRC(t *testing.T) {
 func TestSSRCConn_TwoSenders_ReplyToLatest(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
-	ssrcConn, err := ListenUDP(&net.UDPAddr{Port: 4444})
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{Port: 4444})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ssrcConn, err := NewSSRCMux(conn)
 	if err != nil {
 		t.Fatal(err)
 	}

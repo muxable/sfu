@@ -46,13 +46,8 @@ var udpOOBSize = func() int {
 	return len(oob6)
 }()
 
-// NewSessionizer wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
-func ListenUDP(addr *net.UDPAddr) (*SSRCConn, error) {
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		return nil, err
-	}
-
+// NewSSRCMux wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
+func NewSSRCMux(conn *net.UDPConn) (*SSRCConn, error) {
 	ecn.EnableExplicitCongestionNotification(conn)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -169,12 +164,12 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		}
 		return n, addr, nil
 	} else {
-		pkt := &rtp.Packet{}
-		if err := pkt.Unmarshal(p); err != nil {
+		header := &rtp.Header{}
+		if _, err := header.Unmarshal(p); err != nil {
 			// not a valid rtp/rtcp packet.
 			return n, addr, nil
 		}
-		ssrc := webrtc.SSRC(pkt.SSRC)
+		ssrc := webrtc.SSRC(header.SSRC)
 		s.Lock()
 		defer s.Unlock()
 		s.sources[ssrc] = addr
@@ -188,7 +183,7 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 
 		// get the twcc header sequence number.
 		tccExt := &rtp.TransportCCExtension{}
-		if ext := pkt.Header.GetExtension(5); ext != nil {
+		if ext := header.GetExtension(5); ext != nil {
 			if err := tccExt.Unmarshal(ext); err != nil {
 				log.Error().Err(err).Msg("failed to unmarshal twcc extension")
 				return n, SSRCAddr(ssrc), nil

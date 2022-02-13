@@ -18,7 +18,7 @@ message Signal {
 
 message Request {
   oneof operation {
-    string subscribe_stream_id = 1;
+    string key = 1;
     Signal signal = 2;
   }
 }

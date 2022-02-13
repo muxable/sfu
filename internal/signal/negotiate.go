@@ -1,4 +1,4 @@
-package peerconnection
+package signal
 
 import (
 	"encoding/json"
