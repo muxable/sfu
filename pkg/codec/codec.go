@@ -1,4 +1,4 @@
-// codec contains supported codecs for the ingression server.
+// codec contains supported codecs for the sfuion server.
 package codec
 
 import (

@@ -7,10 +7,10 @@ import (
 	"net"
 	"time"
 
-	"github.com/muxable/ingress/internal/demuxer"
-	"github.com/muxable/ingress/internal/sessionizer"
-	"github.com/muxable/ingress/pkg/codec"
 	"github.com/muxable/rtptools/pkg/rfc7005"
+	"github.com/muxable/sfu/internal/demuxer"
+	"github.com/muxable/sfu/internal/sessionizer"
+	"github.com/muxable/sfu/pkg/codec"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"

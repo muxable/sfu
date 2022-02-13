@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/muxable/ingress/pkg/server"
+	"github.com/muxable/sfu/pkg/server"
 	"github.com/muxable/transcoder/pkg/transcoder"
 	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/webrtc/v3"
