@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+import "google/protobuf/any.proto";
+
 option go_package = "github.com/muxable/sfu/api";
 
 package api;
@@ -8,21 +10,13 @@ service SFU {
   rpc Signal(stream Request) returns (stream Response) {}
 }
 
-message Signal {
-  oneof payload {
-    string offer_sdp = 1;
-    string answer_sdp = 2;
-    string trickle = 3;
-  }
-}
-
 message Request {
   oneof operation {
     string key = 1;
-    Signal signal = 2;
+    google.protobuf.Any signal = 2;
   }
 }
 
 message Response {
-    Signal signal = 1;
+    google.protobuf.Any signal = 1;
 }

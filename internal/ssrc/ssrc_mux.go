@@ -223,3 +223,5 @@ func (s *SSRCConn) Close() error {
 	s.cancel()
 	return s.UDPConn.Close()
 }
+
+var _ net.PacketConn = (*SSRCConn)(nil)

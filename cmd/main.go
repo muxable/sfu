@@ -65,6 +65,7 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
+	webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
 	// rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
 	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
 	tcAddr := flag.String("transcode", "", "The address of the transcoder")
@@ -78,6 +79,7 @@ func main() {
 
 	go runRTPServer(*rtpAddr, tlCh)
 	// go runRTMPServer(*rtmpAddr, tlCh)
+	go runWebRTCServer(*webrtcAddr, tlCh)
 
 	for {
 		tl, ok := <-tlCh
@@ -92,7 +94,7 @@ func main() {
 			zap.L().Error("failed to join", zap.Error(err))
 			continue
 		}
-		if tc == nil || tl.Kind() != webrtc.RTPCodecTypeVideo {
+		if tc == nil {
 			if _, err := rtc.Publish(tl); err != nil {
 				zap.L().Error("failed to publish", zap.Error(err))
 				continue
@@ -105,9 +107,7 @@ func main() {
 				continue
 			}
 
-			dial, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 23084})
-
-			transcodedLocal, err := pipe(transcodedRemote, dial)
+			transcodedLocal, err := pipe(transcodedRemote)
 
 			zap.L().Info("transcoded", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
 			if err != nil {
@@ -124,7 +124,7 @@ func main() {
 	}
 }
 
-func pipe(tr *webrtc.TrackRemote, c *net.UDPConn) (*webrtc.TrackLocalStaticRTP, error) {
+func pipe(tr *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
 	tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID())
 	if err != nil {
 		return nil, err
@@ -169,6 +169,26 @@ func runRTPServer(addr string, out chan *server.NamedTrackLocal) error {
 	zap.L().Info("listening for RTP", zap.String("addr", addr))
 
 	return rtpServer.Serve(conn)
+}
+
+func runWebRTCServer(addr string, out chan *server.NamedTrackLocal) error {
+	grpcAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to resolve TCP address")
+	}
+	grpcConn, err := net.ListenTCP("tcp", grpcAddr)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to listen on TCP")
+	}
+	
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port:0})
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to listen on UDP")
+	}
+
+	zap.L().Info("listening for WebRTC", zap.String("addr", grpcAddr.String()))
+
+	return server.ServeWebRTC(udpConn, grpcConn, out)
 }
 
 // func runRTMPServer(addr string, out chan *server.NamedTrackLocal) error {

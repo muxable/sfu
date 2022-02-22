@@ -5,8 +5,8 @@ import (
 	"net"
 
 	"github.com/muxable/sfu/api"
-	"github.com/muxable/sfu/internal/signal"
 	"github.com/muxable/sfu/internal/ssrc"
+	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
