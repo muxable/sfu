@@ -485,6 +485,8 @@ github.com/muxable/signal v0.0.0-20220222152720-780c4a7723b5 h1:aKfLFt7SNbze2Bd3
 github.com/muxable/signal v0.0.0-20220222152720-780c4a7723b5/go.mod h1:QTlYqYjGamoIxx8cHoL+I8NfLKT53WSxD78Jy0ZkBaE=
 github.com/muxable/transcoder v0.4.0 h1:l6NtsSnkLgWHXDhjPJB9L77JytSfgvcJjercM4yOPfQ=
 github.com/muxable/transcoder v0.4.0/go.mod h1:O1jchNPUQ7+dU3lgzHz9CKHw+uMCW5stYmG1pO2tfVA=
+github.com/muxable/transcoder v0.4.1 h1:U+3rxEpMLSAmUcA0TdqhcrqNOGEl3e5wsu9G7o+N608=
+github.com/muxable/transcoder v0.4.1/go.mod h1:O1jchNPUQ7+dU3lgzHz9CKHw+uMCW5stYmG1pO2tfVA=
 github.com/mwitkow/go-conntrack v0.0.0-20161129095857-cc309e4a2223/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f/go.mod h1:qRWi+5nqEBWmkhHvq77mSJWrCKwh8bxhgT7d/eI7P4U=
 github.com/mwitkow/grpc-proxy v0.0.0-20181017164139-0f1106ef9c76/go.mod h1:x5OoJHDHqxHS801UIuhqGl6QdSAEJvtausosHSdazIo=
