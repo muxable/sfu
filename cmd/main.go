@@ -68,7 +68,7 @@ func main() {
 	webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
 	// rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
 	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
-	tcAddr := flag.String("transcode", "", "The address of the transcoder")
+	tcAddr := flag.String("transcode", "localhost:50050", "The address of the transcoder")
 	flag.Parse()
 
 	tc := resolveTranscoder(*tcAddr)
@@ -101,7 +101,7 @@ func main() {
 			}
 			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
 		} else {
-			transcodedRemote, err := tc.Transcode(tl)
+			transcodedRemote, err := tc.Transcode(tl.TrackLocalStaticRTP)
 			if err != nil {
 				zap.L().Error("failed to transcode", zap.Error(err))
 				continue
