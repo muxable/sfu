@@ -2,8 +2,6 @@ module github.com/muxable/sfu
 
 go 1.17
 
-replace "github.com/muxable/transcoder" => "../transcoder"
-
 require (
 	github.com/haivision/srtgo v0.0.0-20211019211331-3f0cef2e19ee
 	github.com/muxable/rtptools v0.1.6
