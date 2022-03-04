@@ -6,3 +6,8 @@ int cgoReadPacketFunc(void *opaque, uint8_t *buf, int buf_size)
 {
     return goReadPacketFunc(opaque, buf, buf_size);
 }
+
+int cgoWritePacketFunc(void *opaque, uint8_t *buf, int buf_size)
+{
+    return goWritePacketFunc(opaque, buf, buf_size);
+}

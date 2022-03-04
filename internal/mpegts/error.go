@@ -1,4 +1,4 @@
-package av
+package mpegts
 
 /*
 #cgo pkg-config: libavutil

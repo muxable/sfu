@@ -1,6 +1,13 @@
 package main
 
 import (
+	"net"
+
+	"github.com/muxable/sfu/internal/mpegts"
+)
+
+/*
+import (
 	"context"
 	"flag"
 	"net"
@@ -180,7 +187,7 @@ func runWebRTCServer(addr string, out chan *server.NamedTrackLocal) error {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to listen on TCP")
 	}
-	
+
 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port:0})
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to listen on UDP")
@@ -216,3 +223,38 @@ func runWebRTCServer(addr string, out chan *server.NamedTrackLocal) error {
 
 // 	return rtmpServer.Serve(conn)
 // }
+*/
+
+func main() {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 5000})
+	if err != nil {
+		panic(err)
+	}
+	defer conn.Close()
+
+	d, err := mpegts.NewDemuxer(conn)
+	if err != nil {
+		panic(err)
+	}
+
+	dial, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5002})
+	if err != nil {
+		panic(err)
+	}
+
+	for {
+		p, err := d.ReadRTP()
+		if err != nil {
+			panic(err)
+		}
+
+		buf, err := p.Marshal()
+		if err != nil {
+			panic(err)
+		}
+
+		if _, err := dial.Write(buf); err != nil {
+			panic(err)
+		}
+	}
+}
