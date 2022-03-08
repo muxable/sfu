@@ -34,6 +34,16 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio
 	ticker := time.NewTicker(time.Second)
 	done := make(chan bool, 1)
 
+	rtpReader, rtpWriter := rtpio.RTPPipe()
+	rtcpReader, rtcpWriter := rtpio.RTCPPipe()
+	go onNewCNAME("mugit", rtpReader, rtcpReader)
+	defaultSource := &CNAMESource{
+		CNAME:           "mugit",
+		RTPWriteCloser:  rtpWriter,
+		RTCPWriteCloser: rtcpWriter,
+		lastPacket:      d.clock(),
+	}
+
 	go func() {
 		for {
 			p, err := rtpIn.ReadRTP()
@@ -53,9 +63,10 @@ func NewCNAMEDemuxer(clock func() time.Time, rtpIn rtpio.RTPReader, rtcpIn rtpio
 			d.Lock()
 			s, ok := d.bySSRC[webrtc.SSRC(p.SSRC)]
 			if !ok {
-				zap.L().Warn("received packet for unknown ssrc", zap.Uint32("ssrc", uint32(p.SSRC)))
-				d.Unlock()
-				continue
+				// zap.L().Warn("received packet for unknown ssrc", zap.Uint32("ssrc", uint32(p.SSRC)))
+				// d.Unlock()
+				// continue
+				s = defaultSource
 			}
 			// forward to this source.
 			if err := s.RTPWriteCloser.WriteRTP(p); err != nil {
@@ -136,16 +147,6 @@ func assignment(p *rtcp.SourceDescription) (webrtc.SSRC, string, bool) {
 		}
 	}
 	return 0, "", false
-}
-
-// source finds the source matching a cname and ssrc pair.
-func (d *CNAMEDemuxer) byCNAME(cname string) (*CNAMESource, bool) {
-	for _, s := range d.bySSRC {
-		if s.CNAME == cname {
-			return s, true
-		}
-	}
-	return nil, false
 }
 
 // cleanup removes any cname sources that haven't received a packet in the last 30 seconds

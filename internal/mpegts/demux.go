@@ -1,77 +1,114 @@
 package mpegts
 
 /*
-#cgo pkg-config: libavformat
+#cgo pkg-config: libavformat libavcodec
+#include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include "demux.h"
 */
 import "C"
 import (
 	"errors"
+	"fmt"
 	"io"
-	"log"
+	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/mattn/go-pointer"
 	"github.com/pion/rtp"
-	"go.uber.org/zap"
+	"github.com/pion/sdp/v3"
+	"github.com/pion/webrtc/v3"
 )
 
 var (
-	crtp = C.CString("rtp")
+	crtp              = C.CString("rtp")
+	ch264_mp4toannexb = C.CString("h264_mp4toannexb")
+	chevc_mp4toannexb = C.CString("hevc_mp4toannexb")
 )
 
-func init() {
-	C.av_log_set_level(56)
+type result struct {
+	p *rtp.Packet
+	e error
 }
 
 type DemuxContext struct {
-	r io.Reader
-	inAVFormatCtx *C.AVFormatContext
+	r               io.Reader
+	inAVFormatCtx   *C.AVFormatContext
+	outAVBSFCtxs    []*C.AVBSFContext
 	outAVFormatCtxs []*C.AVFormatContext
-	pch chan *rtp.Packet
+	pch             chan *result
+	streamMapping   map[int]int
 }
 
 func NewDemuxer(r io.Reader) (*DemuxContext, error) {
-	c := &DemuxContext{r: r, pch: make(chan *rtp.Packet)}
+	c := &DemuxContext{r: r, pch: make(chan *result), streamMapping: make(map[int]int)}
+	// we want initialization to be synchronous (unlike the transcoder) because initialization tells us what streams are available
 	if err := c.init(); err != nil {
 		return nil, err
 	}
 	go func() {
-		pkt := C.av_packet_alloc()
-		defer C.av_packet_free(&pkt)
-		defer C.avformat_free_context(c.inAVFormatCtx)
+		defer close(c.pch)
 		defer func() {
-			for _, ctx := range c.outAVFormatCtxs {
-				C.avformat_free_context(ctx)
+			for _, ctx := range c.outAVBSFCtxs {
+				C.av_bsf_free(&ctx)
 			}
 		}()
 
-		for _, ctx := range c.outAVFormatCtxs {
-			if averr := C.avformat_write_header(ctx, nil); averr < 0 {
-				panic(averr)
-			}
+		pkt := C.av_packet_alloc()
+		if pkt == nil {
+			c.pch <- &result{e: errors.New("failed to allocate packet")}
+			return
 		}
+		defer C.av_packet_free(&pkt)
+
+		defer func() {
+			for _, ctx := range c.outAVFormatCtxs {
+				if averr := C.av_write_trailer(ctx); averr < 0 {
+					c.pch <- &result{e: av_err("av_write_trailer", averr)}
+				}
+			}
+		}()
 
 		for {
-			averr := C.av_read_frame(c.inAVFormatCtx, pkt)
-			if averr < 0 {
-				err := av_err("av_read_frame", averr)
-				if err == io.EOF {
-					return
-				}
-				panic(err)
+			if averr := C.av_read_frame(c.inAVFormatCtx, pkt); averr < 0 {
+				c.pch <- &result{e: av_err("av_read_frame", averr)}
+				return
 			}
 
-			pkt.pos = C.int64_t(-1)
+			instream := ((*[1 << 30]*C.AVStream)(unsafe.Pointer(c.inAVFormatCtx.streams)))[pkt.stream_index]
+			index, ok := c.streamMapping[int(pkt.stream_index)]
+			if !ok {
+				continue
+			}
 
-			instream := (*[1<<30]C.AVStream)(unsafe.Pointer(c.inAVFormatCtx.streams))[pkt.stream_index]
-			outstream := (*[1<<30]C.AVStream)(unsafe.Pointer(c.outAVFormatCtxs[pkt.stream_index].streams))[0]
+			outavformatctx := c.outAVFormatCtxs[index]
+
+			pkt.stream_index = C.int(0)
+			outstream := ((*[1 << 30]*C.AVStream)(unsafe.Pointer(outavformatctx.streams)))[0]
 
 			C.av_packet_rescale_ts(pkt, instream.time_base, outstream.time_base)
-	
-			if averr := C.av_write_frame(c.outAVFormatCtxs[pkt.stream_index], pkt); averr < 0 {
-				panic(av_err("av_write_frame", averr))
+			pkt.pos = -1
+
+			bsf := c.outAVBSFCtxs[index]
+			if averr := C.av_bsf_send_packet(bsf, pkt); averr < 0 {
+				c.pch <- &result{e: av_err("av_bsf_send_packet", averr)}
+				return
+			}
+
+			for {
+				if averr := C.av_bsf_receive_packet(bsf, pkt); averr < 0 {
+					if averr == -C.EAGAIN {
+						break
+					}
+					c.pch <- &result{e: av_err("av_bsf_receive_packet", averr)}
+					return
+				}
+
+				if averr := C.av_write_frame(outavformatctx, pkt); averr < 0 {
+					c.pch <- &result{e: av_err("av_interleaved_write_frame", averr)}
+					return
+				}
 			}
 		}
 	}()
@@ -84,10 +121,8 @@ func goReadPacketFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 	buf := make([]byte, int(bufsize))
 	n, err := d.r.Read(buf)
 	if err != nil {
-		if err != io.EOF {
-			zap.L().Error("failed to read RTP packet", zap.Error(err))
-		}
-		return C.int(0)
+		d.pch <- &result{e: err}
+		return C.int(-1)
 	}
 	C.memcpy(unsafe.Pointer(cbuf), unsafe.Pointer(&buf[0]), C.ulong(n))
 	return C.int(n)
@@ -95,23 +130,27 @@ func goReadPacketFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 
 //export goWritePacketFunc
 func goWritePacketFunc(opaque unsafe.Pointer, buf *C.uint8_t, bufsize C.int) C.int {
-	m := pointer.Restore(opaque).(*DemuxContext)
+	d := pointer.Restore(opaque).(*DemuxContext)
 	b := C.GoBytes(unsafe.Pointer(buf), bufsize)
 	p := &rtp.Packet{}
 	if err := p.Unmarshal(b); err != nil {
-		zap.L().Error("failed to unmarshal rtp packet", zap.Error(err))
+		d.pch <- &result{e: err}
 		return C.int(-1)
 	}
-	m.pch <- p
+	if p.PayloadType != 72 {
+		// filter out rtcp packets, they're not useful for us
+		d.pch <- &result{p: p}
+	}
 	return bufsize
 }
 
 func (c *DemuxContext) init() error {
-	// construct the input context
-	inAVFormatCtx := C.avformat_alloc_context()
-	if inAVFormatCtx == nil {
-		return errors.New("failed to create format context")
+	outputformat := C.av_guess_format(crtp, nil, nil)
+	if outputformat == nil {
+		return errors.New("failed to find rtp output format")
 	}
+
+	inavformatctx := C.avformat_alloc_context()
 
 	inbuf := C.av_malloc(4096)
 	if inbuf == nil {
@@ -123,28 +162,19 @@ func (c *DemuxContext) init() error {
 		return errors.New("failed to allocate avio context")
 	}
 
-	inAVFormatCtx.pb = inavioctx
-	if averr := C.avformat_open_input(&inAVFormatCtx, nil, nil, nil); averr < C.int(0) {
+	inavformatctx.pb = inavioctx
+
+	if averr := C.avformat_open_input(&inavformatctx, nil, nil, nil); averr < 0 {
 		return av_err("avformat_open_input", averr)
 	}
 
-	if averr := C.avformat_find_stream_info(inAVFormatCtx, nil); averr < C.int(0) {
+	if averr := C.avformat_find_stream_info(inavformatctx, nil); averr < 0 {
 		return av_err("avformat_find_stream_info", averr)
 	}
 
-	// create output streams
-	instreams := (*[1<<30]C.AVStream)(unsafe.Pointer(inAVFormatCtx.streams))
-	for i := 0; i < int(inAVFormatCtx.nb_streams); i++ {
-		// construct the output context
-		// the rtp muxer only accepts one stream per muxer, so we must create one context
-		// per stream despite merging them in memory
-		outputformat := C.av_guess_format(crtp, nil, nil)
-		if outputformat == nil {
-			return errors.New("failed to find rtp output format")
-		}
-
-		var outAVFormatCtx *C.AVFormatContext
-		if averr := C.avformat_alloc_output_context2(&outAVFormatCtx, outputformat, nil, nil); averr < 0 {
+	for i := 0; i < int(inavformatctx.nb_streams); i++ {
+		var outavformatctx *C.AVFormatContext
+		if averr := C.avformat_alloc_output_context2(&outavformatctx, outputformat, nil, nil); averr < 0 {
 			return av_err("avformat_alloc_output_context2", averr)
 		}
 
@@ -160,24 +190,64 @@ func (c *DemuxContext) init() error {
 
 		outavioctx.max_packet_size = 1200
 
-		outAVFormatCtx.pb = outavioctx
+		outavformatctx.pb = outavioctx
 
-     	C.av_dump_format(inAVFormatCtx, C.int(i), crtp, 0)
+		var outstream *C.AVStream
+		instream := ((*[1 << 30]*C.AVStream)(unsafe.Pointer(inavformatctx.streams)))[i]
+		incodecpar := instream.codecpar
 
-		instream := instreams[i]
-		outstream := C.avformat_new_stream(outAVFormatCtx, nil)
+		if incodecpar.codec_type != C.AVMEDIA_TYPE_AUDIO && incodecpar.codec_type != C.AVMEDIA_TYPE_VIDEO {
+			continue
+		}
+
+		c.streamMapping[i] = len(c.streamMapping)
+
+		outstream = C.avformat_new_stream(outavformatctx, nil)
 		if outstream == nil {
 			return errors.New("failed to create output stream")
 		}
 
-		log.Printf("copying %d %#v", i, instream)
-		if averr := C.avcodec_parameters_copy(outstream.codecpar, instream.codecpar); averr < C.int(0) {
+		if averr := C.avcodec_parameters_copy(outstream.codecpar, incodecpar); averr < 0 {
 			return av_err("avcodec_parameters_copy", averr)
 		}
-		c.outAVFormatCtxs = append(c.outAVFormatCtxs, outAVFormatCtx)
+
+		// write the header here to pass the payload type options
+		var opts *C.AVDictionary
+		if averr := C.av_dict_set_int(&opts, C.CString("payload_type"), C.int64_t(96+i), 0); averr < 0 {
+			return av_err("av_dict_set_int", averr)
+		}
+		if averr := C.avformat_write_header(outavformatctx, &opts); averr < 0 {
+			return av_err("avformat_write_header", averr)
+		}
+
+		c.outAVFormatCtxs = append(c.outAVFormatCtxs, outavformatctx)
+
+		// create a bitstream filter context
+		var bsf *C.AVBSFContext
+		switch instream.codec.codec_id {
+		case C.AV_CODEC_ID_HEVC:
+			if averr := C.av_bsf_list_parse_str(ch264_mp4toannexb, &bsf); averr < 0 {
+				return av_err("av_bsf_list_parse_str", averr)
+			}
+		case C.AV_CODEC_ID_H264:
+			if averr := C.av_bsf_list_parse_str(ch264_mp4toannexb, &bsf); averr < 0 {
+				return av_err("av_bsf_list_parse_str", averr)
+			}
+		default:
+			if averr := C.av_bsf_get_null_filter(&bsf); averr < 0 {
+				return av_err("av_bsf_get_null_filter", averr)
+			}
+		}
+		bsf.par_in = incodecpar
+		bsf.par_out = outstream.codecpar
+		if averr := C.av_bsf_init(bsf); averr < 0 {
+			return av_err("av_bsf_init", averr)
+		}
+
+		c.outAVBSFCtxs = append(c.outAVBSFCtxs, bsf)
 	}
 
-	c.inAVFormatCtx = inAVFormatCtx
+	c.inAVFormatCtx = inavformatctx
 
 	return nil
 }
@@ -187,5 +257,70 @@ func (c *DemuxContext) ReadRTP() (*rtp.Packet, error) {
 	if !ok {
 		return nil, io.EOF
 	}
-	return p, nil
+	return p.p, p.e
+}
+
+func (c *DemuxContext) RTPCodecParameters() ([]*webrtc.RTPCodecParameters, error) {
+	buf := C.av_mallocz(16384)
+	if averr := C.av_sdp_create((**C.AVFormatContext)(unsafe.Pointer(&c.outAVFormatCtxs[0])), C.int(len(c.outAVFormatCtxs)), (*C.char)(buf), 16384); averr < 0 {
+		return nil, av_err("av_sdp_create", averr)
+	}
+
+	s := sdp.SessionDescription{}
+	if err := s.Unmarshal([]byte(C.GoString((*C.char)(buf)))); err != nil {
+		return nil, err
+	}
+
+	params := make([]*webrtc.RTPCodecParameters, len(s.MediaDescriptions))
+	for i, desc := range s.MediaDescriptions {
+		if len(desc.MediaName.Formats) != 1 {
+			return nil, errors.New("unexpected number of formats")
+		}
+		pt, err := strconv.ParseUint(desc.MediaName.Formats[0], 10, 8)
+		if err != nil {
+			return nil, err
+		}
+		rtpmap, ok := desc.Attribute("rtpmap")
+		if !ok {
+			// uh oh, unsupported codec?
+			// TODO: handle this properly, we should probably reject the input.
+			continue
+		}
+		parts := strings.Split(rtpmap, " ")
+		if len(parts) != 2 {
+			return nil, errors.New("unexpected number of parts")
+		}
+		if parts[0] != fmt.Sprint(pt) {
+			return nil, errors.New("unexpected payload type")
+		}
+		data := strings.Split(parts[1], "/")
+
+		mime := fmt.Sprintf("%s/%s", desc.MediaName.Media, data[0])
+		clockRate, err := strconv.ParseUint(data[1], 10, 32)
+		if err != nil {
+			return nil, err
+		}
+		var channels uint64
+		if len(data) > 2 {
+			channels, err = strconv.ParseUint(data[2], 10, 16)
+			if err != nil {
+				return nil, err
+			}
+		}
+		fmtp, ok := desc.Attribute("fmtp")
+		if ok {
+			fmtp = fmtp[len(fmt.Sprint(pt))+1:]
+		}
+
+		params[i] = &webrtc.RTPCodecParameters{
+			PayloadType: webrtc.PayloadType(pt),
+			RTPCodecCapability: webrtc.RTPCodecCapability{
+				MimeType: mime,
+				ClockRate: uint32(clockRate),
+				Channels: uint16(channels),
+				SDPFmtpLine: fmtp,
+			},
+		}
+	}
+	return params, nil
 }

@@ -3,27 +3,24 @@ package server
 import (
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"time"
 
-	"github.com/muxable/rtptools/pkg/rfc7005"
 	"github.com/muxable/sfu/internal/demuxer"
 	"github.com/muxable/sfu/internal/sessionizer"
 	"github.com/muxable/sfu/pkg/codec"
-	"github.com/pion/rtcp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
 	"github.com/rs/zerolog/log"
 )
 
 type RTPServer struct {
-	trackCh chan *NamedTrackLocal
+	trackCh chan *webrtc.TrackLocalStaticRTP
 }
 
 func NewRTPServer() *RTPServer {
 	return &RTPServer{
-		trackCh: make(chan *NamedTrackLocal),
+		trackCh: make(chan *webrtc.TrackLocalStaticRTP),
 	}
 }
 
@@ -45,7 +42,7 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 			return err
 		}
 
-		senderSSRC := rand.Uint32()
+		// senderSSRC := rand.Uint32()
 
 		// this api is a bit awkward, but is less insane than lots of for loops.
 		go demuxer.NewCNAMEDemuxer(time.Now, source, source, func(cname string, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader) {
@@ -60,43 +57,43 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 					return
 				}
 				log.Debug().Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("demuxer found new stream type")
-				jb, jbRTP := rfc7005.NewJitterBuffer(codec.ClockRate, 1*time.Second, rtpIn)
+				// jb, jbRTP := rfc7005.NewJitterBuffer(codec.ClockRate, 750*time.Millisecond, rtpIn)
 				// write nacks periodically back to the sender
 				nackTicker := time.NewTicker(100 * time.Millisecond)
 				defer nackTicker.Stop()
 				done := make(chan bool, 1)
 				defer func() { done <- true }()
-				go func() {
-					prevMissing := make([]bool, 1<<16)
-					for {
-						select {
-						case <-nackTicker.C:
-							missing := jb.GetMissingSequenceNumbers(uint64(codec.ClockRate / 10))
-							if len(missing) == 0 {
-								break
-							}
-							retained := make([]uint16, 0)
-							nextMissing := make([]bool, 1<<16)
-							for _, seq := range missing {
-								if prevMissing[seq] {
-									retained = append(retained, seq)
-								}
-								nextMissing[seq] = true
-							}
-							prevMissing = nextMissing
-							nack := &rtcp.TransportLayerNack{
-								SenderSSRC: senderSSRC,
-								MediaSSRC:  uint32(source.SSRC),
-								Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
-							}
-							if err := source.WriteRTCP([]rtcp.Packet{nack}); err != nil {
-								log.Error().Err(err).Msg("failed to write NACK")
-							}
-						case <-done:
-							return
-						}
-					}
-				}()
+				// go func() {
+				// 	prevMissing := make([]bool, 1<<16)
+				// 	for {
+				// 		select {
+				// 		case <-nackTicker.C:
+				// 			missing := jb.GetMissingSequenceNumbers(uint64(codec.ClockRate / 10))
+				// 			if len(missing) == 0 {
+				// 				break
+				// 			}
+				// 			retained := make([]uint16, 0)
+				// 			nextMissing := make([]bool, 1<<16)
+				// 			for _, seq := range missing {
+				// 				if prevMissing[seq] {
+				// 					retained = append(retained, seq)
+				// 				}
+				// 				nextMissing[seq] = true
+				// 			}
+				// 			prevMissing = nextMissing
+				// 			nack := &rtcp.TransportLayerNack{
+				// 				SenderSSRC: senderSSRC,
+				// 				MediaSSRC:  uint32(source.SSRC),
+				// 				Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
+				// 			}
+				// 			if err := source.WriteRTCP([]rtcp.Packet{nack}); err != nil {
+				// 				log.Error().Err(err).Msg("failed to write NACK")
+				// 			}
+				// 		case <-done:
+				// 			return
+				// 		}
+				// 	}
+				// }()
 
 				log.Info().Str("CNAME", "").Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("new inbound stream")
 
@@ -105,22 +102,17 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 					MimeType: codec.MimeType,
 					ClockRate: codec.ClockRate,
 					Channels: codec.Channels,
-					SDPFmtpLine: "sprop-vps=QAEMAf//AWAAAAMAkAAAAwAAAwA/ugJA,sprop-sps=QgEBAWAAAAMAkAAAAwAAAwA/oAoIDxZbpKTC//AAEAAQEAAAAwAQAAADAeCA,sprop-pps=RAHAcYES",
-				}, tid, tid)
+				}, tid, cname)
 				if err != nil {
 					log.Error().Err(err).Msg("failed to create track")
 					return
 				}
 
-				s.trackCh <- &NamedTrackLocal{
-					TrackLocalStaticRTP: track,
-					CNAME:               cname,
-					TrackID:             tid,
-				}
+				s.trackCh <- track
 				
 				prevSeq := uint16(0)
 				for {
-					p, err := jbRTP.ReadRTP()
+					p, err := rtpIn.ReadRTP()
 					if err != nil {
 						return
 					}
@@ -138,7 +130,7 @@ func (s *RTPServer) Serve(conn *net.UDPConn) error {
 }
 
 // AcceptTrackLocal returns a track that can be sent to a peer connection.
-func (s *RTPServer) AcceptTrackLocal() (*NamedTrackLocal, error) {
+func (s *RTPServer) AcceptTrackLocal() (*webrtc.TrackLocalStaticRTP, error) {
 	ntl, ok := <-s.trackCh
 	if !ok {
 		return nil, io.EOF

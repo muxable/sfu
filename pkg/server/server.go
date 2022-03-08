@@ -7,7 +7,7 @@ import (
 )
 
 type TrackProducer interface {
-	AcceptTrackLocal() (*NamedTrackLocal, error)
+	AcceptTrackLocal() (*webrtc.TrackLocalStaticRTP, error)
 }
 
 type TCPServer interface {
@@ -16,11 +16,4 @@ type TCPServer interface {
 
 type UDPServer interface {
 	Serve(*net.UDPConn) error
-}
-
-type NamedTrackLocal struct {
-	*webrtc.TrackLocalStaticRTP
-
-	CNAME   string
-	TrackID string
 }

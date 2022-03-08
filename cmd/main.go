@@ -1,13 +1,6 @@
 package main
 
 import (
-	"net"
-
-	"github.com/muxable/sfu/internal/mpegts"
-)
-
-/*
-import (
 	"context"
 	"flag"
 	"net"
@@ -72,21 +65,19 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
-	webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
-	// rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
+	// webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
+	rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
 	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
-	tcAddr := flag.String("transcode", "localhost:50050", "The address of the transcoder")
 	flag.Parse()
 
-	tc := resolveTranscoder(*tcAddr)
-
-	tlCh := make(chan *server.NamedTrackLocal)
+	tlCh := make(chan *webrtc.TrackLocalStaticRTP)
 
 	connector := sdk.NewConnector(*toAddr)
 
 	go runRTPServer(*rtpAddr, tlCh)
-	// go runRTMPServer(*rtmpAddr, tlCh)
-	go runWebRTCServer(*webrtcAddr, tlCh)
+	go server.RunRTMPServer(*rtmpAddr, tlCh)
+	// go server.RunSRTServer("0.0.0.0", 1935, tlCh)
+	// go runWebRTCServer(*webrtcAddr, tlCh)
 
 	for {
 		tl, ok := <-tlCh
@@ -97,62 +88,19 @@ func main() {
 		zap.L().Info("received track", zap.String("id", tl.ID()), zap.Any("codec", tl.Codec()))
 
 		rtc := sdk.NewRTC(connector)
-		if err := rtc.Join(tl.CNAME, tl.TrackID, sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
+		if err := rtc.Join(tl.StreamID(), tl.ID(), sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
 			zap.L().Error("failed to join", zap.Error(err))
 			continue
 		}
-		if tc == nil {
-			if _, err := rtc.Publish(tl); err != nil {
-				zap.L().Error("failed to publish", zap.Error(err))
-				continue
-			}
-			zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.CNAME))
-		} else {
-			transcodedRemote, err := tc.Transcode(tl.TrackLocalStaticRTP)
-			if err != nil {
-				zap.L().Error("failed to transcode", zap.Error(err))
-				continue
-			}
-
-			transcodedLocal, err := pipe(transcodedRemote)
-
-			zap.L().Info("transcoded", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
-			if err != nil {
-				zap.L().Error("failed to pipe", zap.Error(err))
-				continue
-			}
-
-			if _, err := rtc.Publish(transcodedLocal); err != nil {
-				zap.L().Error("failed to publish", zap.Error(err))
-				continue
-			}
-			zap.L().Info("published", zap.String("id", transcodedLocal.ID()), zap.String("room", tl.CNAME), zap.Any("codec", transcodedLocal.Codec()))
+		if _, err := rtc.Publish(tl); err != nil {
+			zap.L().Error("failed to publish", zap.Error(err))
+			continue
 		}
+		zap.L().Info("published", zap.String("id", tl.ID()), zap.String("room", tl.StreamID()))
 	}
 }
 
-func pipe(tr *webrtc.TrackRemote) (*webrtc.TrackLocalStaticRTP, error) {
-	tl, err := webrtc.NewTrackLocalStaticRTP(tr.Codec().RTPCodecCapability, tr.ID(), tr.StreamID())
-	if err != nil {
-		return nil, err
-	}
-	go func() {
-		for {
-			p, _, err := tr.ReadRTP()
-			if err != nil {
-				log.Printf("failed to read rtp: %v", err)
-				return
-			}
-			if err := tl.WriteRTP(p); err != nil {
-				log.Printf("failed to write rtp: %v", err)
-				return
-			}
-		}
-	}()
-	return tl, nil
-}
-
-func runRTPServer(addr string, out chan *server.NamedTrackLocal) error {
+func runRTPServer(addr string, out chan *webrtc.TrackLocalStaticRTP) error {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to resolve UDP address")
@@ -178,83 +126,22 @@ func runRTPServer(addr string, out chan *server.NamedTrackLocal) error {
 	return rtpServer.Serve(conn)
 }
 
-func runWebRTCServer(addr string, out chan *server.NamedTrackLocal) error {
-	grpcAddr, err := net.ResolveTCPAddr("tcp", addr)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to resolve TCP address")
-	}
-	grpcConn, err := net.ListenTCP("tcp", grpcAddr)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to listen on TCP")
-	}
-
-	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port:0})
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to listen on UDP")
-	}
-
-	zap.L().Info("listening for WebRTC", zap.String("addr", grpcAddr.String()))
-
-	return server.ServeWebRTC(udpConn, grpcConn, out)
-}
-
-// func runRTMPServer(addr string, out chan *server.NamedTrackLocal) error {
-// 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+// func runWebRTCServer(addr string, out chan webrtc.TrackLocal) error {
+// 	grpcAddr, err := net.ResolveTCPAddr("tcp", addr)
 // 	if err != nil {
 // 		log.Fatal().Err(err).Msg("failed to resolve TCP address")
 // 	}
-// 	conn, err := net.ListenTCP("tcp", tcpAddr)
+// 	grpcConn, err := net.ListenTCP("tcp", grpcAddr)
 // 	if err != nil {
 // 		log.Fatal().Err(err).Msg("failed to listen on TCP")
 // 	}
 
-// 	rtmpServer := server.NewRTMPServer()
-// 	go func() {
-// 		for {
-// 			tl, err := rtmpServer.AcceptTrackLocal()
-// 			if err != nil {
-// 				return
-// 			}
-// 			out <- tl
-// 		}
-// 	}()
+// 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port:0})
+// 	if err != nil {
+// 		log.Fatal().Err(err).Msg("failed to listen on UDP")
+// 	}
 
-// 	zap.L().Info("listening for RTMP", zap.String("addr", addr))
+// 	zap.L().Info("listening for WebRTC", zap.String("addr", grpcAddr.String()))
 
-// 	return rtmpServer.Serve(conn)
+// 	return server.ServeWebRTC(udpConn, grpcConn, out)
 // }
-*/
-
-func main() {
-	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 5000})
-	if err != nil {
-		panic(err)
-	}
-	defer conn.Close()
-
-	d, err := mpegts.NewDemuxer(conn)
-	if err != nil {
-		panic(err)
-	}
-
-	dial, err := net.DialUDP("udp", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5002})
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		p, err := d.ReadRTP()
-		if err != nil {
-			panic(err)
-		}
-
-		buf, err := p.Marshal()
-		if err != nil {
-			panic(err)
-		}
-
-		if _, err := dial.Write(buf); err != nil {
-			panic(err)
-		}
-	}
-}

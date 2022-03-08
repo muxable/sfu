@@ -15,11 +15,11 @@ import (
 )
 
 type WebRTCServer struct {
-	trackCh chan *NamedTrackLocal
+	trackCh chan *webrtc.TrackLocalStaticRTP
 	api     *webrtc.API
 }
 
-func ServeWebRTC(conn *net.UDPConn, signal net.Listener, trackCh chan *NamedTrackLocal) error {
+func ServeWebRTC(conn *net.UDPConn, signal net.Listener, trackCh chan *webrtc.TrackLocalStaticRTP) error {
 	mux, err := ssrc.NewSSRCMux(conn)
 	if err != nil {
 		return err
@@ -61,13 +61,7 @@ func (s *WebRTCServer) Signal(conn api.SFU_SignalServer) error {
 		if err != nil {
 			return
 		}
-
-		// new track to publish.
-		s.trackCh <- &NamedTrackLocal{
-			TrackLocalStaticRTP: tl,
-			CNAME: tr.StreamID(),
-			TrackID: tr.ID(),
-		}
+		s.trackCh <- tl
 	})
 
 	signaller := signal.Negotiate(peerConnection)
