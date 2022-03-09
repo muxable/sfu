@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-extern int goWriteRTPPacketFunc(void *, uint8_t *, int);
+extern int goWritePacketFunc(void *, uint8_t *, int);
 
-int cgoWriteRTPPacketFunc(void *, uint8_t *, int);
+int cgoWritePacketFunc(void *, uint8_t *, int);
 
 #endif

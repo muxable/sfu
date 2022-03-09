@@ -15,7 +15,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func RunRTMPServer(addr string, out chan *webrtc.TrackLocalStaticRTP) error {
+func RunRTMPServer(addr string, trackHandler TrackHandler) error {
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return err
@@ -28,52 +28,51 @@ func RunRTMPServer(addr string, out chan *webrtc.TrackLocalStaticRTP) error {
 	zap.L().Info("listening for RTMP", zap.String("addr", addr))
 
 	s := rtmp.NewServer(&rtmp.ServerConfig{
-			OnConnect: func(conn net.Conn) (io.ReadWriteCloser, *rtmp.ConnConfig) {
-				return conn, &rtmp.ConnConfig{
-					Handler: &RTMPHandler{trackCh: out},
-					ControlState: rtmp.StreamControlStateConfig{
-						DefaultBandwidthWindowSize: 6 * 1024 * 1024 / 8,
-					},
-				}
-			},
-		})
+		OnConnect: func(conn net.Conn) (io.ReadWriteCloser, *rtmp.ConnConfig) {
+			return conn, &rtmp.ConnConfig{
+				Handler: &RTMPHandler{trackHandler: trackHandler},
+				ControlState: rtmp.StreamControlStateConfig{
+					DefaultBandwidthWindowSize: 6 * 1024 * 1024 / 8,
+				},
+			}
+		},
+	})
 	return s.Serve(conn)
 }
+
 type RTMPHandler struct {
 	rtmp.DefaultHandler
 
-	w io.WriteCloser
+	w   io.WriteCloser
 	enc *flv.Encoder
 
-	trackCh chan *webrtc.TrackLocalStaticRTP
+	trackHandler TrackHandler
 }
 
 func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish) error {
 	if cmd.PublishingType != "live" {
-		log.Printf("publish 1")
 		return errors.New("unsupported publishing type")
 	}
 	if cmd.PublishingName == "" {
-		log.Printf("publish 2")
 		return errors.New("missing publishing name")
 	}
-	
+
 	r, w := io.Pipe()
 	videoCodec := webrtc.RTPCodecCapability{
-		MimeType: webrtc.MimeTypeH264,
+		MimeType:  webrtc.MimeTypeH264,
 		ClockRate: 90000,
 	}
 	audioCodec := webrtc.RTPCodecCapability{
-		MimeType: webrtc.MimeTypeOpus,
+		MimeType:  webrtc.MimeTypeOpus,
 		ClockRate: 48000,
-		Channels: 2,
+		Channels:  2,
 	}
 	demux := av.NewRawDemuxer(r)
 	decode := av.NewDecoder(demux)
 	encode := av.NewEncoder(audioCodec, videoCodec, decode)
 	mux := av.NewRTPMuxer(encode)
 	go func() {
-		if err := mux.CopyToTracks(cmd.PublishingName, h.trackCh); err != nil {
+		if err := CopyTracks(cmd.PublishingName, h.trackHandler, mux); err != nil {
 			log.Printf("muxer terminated %v", err)
 		}
 	}()
