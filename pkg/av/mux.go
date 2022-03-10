@@ -21,11 +21,11 @@ type buffer struct {
 	e error
 }
 type RawMuxContext struct {
-	avformatctx  *C.AVFormatContext
-	packet       *AVPacket
-	encoder      *EncodeContext
-	format string
-	pch          chan *buffer
+	avformatctx *C.AVFormatContext
+	packet      *AVPacket
+	encoder     *EncodeContext
+	format      string
+	pch         chan *buffer
 }
 
 func NewRawMuxer(format string, encoder *EncodeContext) *RawMuxContext {
@@ -33,7 +33,7 @@ func NewRawMuxer(format string, encoder *EncodeContext) *RawMuxContext {
 		packet:  NewAVPacket(),
 		encoder: encoder,
 		format:  format,
-		pch:     make(chan *buffer, 8),  // we need a small buffer here to avoid blocking initialization.
+		pch:     make(chan *buffer, 8), // we need a small buffer here to avoid blocking initialization.
 	}
 	return c
 }

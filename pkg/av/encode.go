@@ -67,7 +67,8 @@ func (c *EncodeContext) init() error {
 		var opts *C.AVDictionary
 		defer C.av_dict_free(&opts)
 
-		if codec.MimeType == webrtc.MimeTypeH264 {
+		switch codec.MimeType {
+		case webrtc.MimeTypeH264:
 			if averr := C.av_dict_set(&opts, C.CString("preset"), C.CString("ultrafast"), 0); averr < 0 {
 				return av_err("av_dict_set", averr)
 			}
@@ -76,6 +77,19 @@ func (c *EncodeContext) init() error {
 			}
 			if averr := C.av_dict_set(&opts, C.CString("profile"), C.CString("high"), 0); averr < 0 {
 				return av_err("av_dict_set", averr)
+			}
+		case webrtc.MimeTypeVP8:
+			if averr := C.av_dict_set_int(&opts, C.CString("deadline"), 1, 0); averr < 0 {
+				return av_err("av_dict_set_int", averr)
+			}
+			if averr := C.av_dict_set_int(&opts, C.CString("cpu-used"), 5, 0); averr < 0 {
+				return av_err("av_dict_set_int", averr)
+			}
+			if averr := C.av_dict_set_int(&opts, C.CString("error-resilient"), 1, 0); averr < 0 {
+				return av_err("av_dict_set_int", averr)
+			}
+			if averr := C.av_dict_set_int(&opts, C.CString("auto-alt-ref"), 1, 0); averr < 0 {
+				return av_err("av_dict_set_int", averr)
 			}
 		}
 

@@ -211,7 +211,7 @@ func (c *RTPMuxContext) RTPCodecParameters() ([]*webrtc.RTPCodecParameters, erro
 				MimeType:    mime,
 				ClockRate:   uint32(clockRate),
 				Channels:    uint16(channels),
-				SDPFmtpLine: fmt.Sprintf("%s; profile-level-id=640032", fmtp),
+				SDPFmtpLine: fmtp,
 			},
 		}
 	}

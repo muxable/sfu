@@ -5,15 +5,53 @@ import (
 	"net"
 
 	"github.com/muxable/sfu/pkg/av"
+	sdk "github.com/pion/ion-sdk-go"
 	"github.com/pion/webrtc/v3"
 )
 
-type TrackHandler interface {
-	AddTrack(webrtc.TrackLocal) (*webrtc.RTPSender, error)
-	RemoveTrack(*webrtc.RTPSender) error
+type TrackHandler func(webrtc.TrackLocal) (func() error, error)
+
+func NewPeerConnectionTrackHandler(pc *webrtc.PeerConnection) TrackHandler {
+	return func(t webrtc.TrackLocal) (func() error, error) {
+		s, err := pc.AddTrack(t)
+		if err != nil {
+			return nil, err
+		}
+		go func() {
+			buf := make([]byte, 1500)
+			for {
+				_, _, err := s.Read(buf)
+				if err != nil {
+					break
+				}
+			}
+		}()
+		return func() error {
+			return pc.RemoveTrack(s)
+		}, nil
+	}
 }
 
-func CopyTracks(sid string, pc TrackHandler, c *av.RTPMuxContext) error {
+func NewRTCTrackHandler(connector *sdk.Connector) TrackHandler {
+	return func(t webrtc.TrackLocal) (func() error, error) {
+		rtc, err := sdk.NewRTC(connector)
+		if err != nil {
+			return nil, err
+		}
+		if err := rtc.Join(t.StreamID(), t.ID(), sdk.NewJoinConfig().SetNoSubscribe().SetNoAutoSubscribe()); err != nil {
+			return nil, err
+		}
+		s, err := rtc.Publish(t)
+		if err != nil {
+			return nil, err
+		}
+		return func() error {
+			return rtc.UnPublish(s...)
+		}, nil
+	}
+}
+
+func CopyTracks(sid string, th TrackHandler, c *av.RTPMuxContext) error {
 	if err := c.Initialize(); err != nil {
 		return err
 	}
@@ -34,20 +72,11 @@ func CopyTracks(sid string, pc TrackHandler, c *av.RTPMuxContext) error {
 			return err
 		}
 		tracks[uint8(p.PayloadType)] = track
-		rtpSender, err := pc.AddTrack(track)
+		remove, err := th(track)
 		if err != nil {
 			return err
 		}
-		go func() {
-			buf := make([]byte, 1500)
-			for {
-				_, _, err := rtpSender.Read(buf)
-				if err != nil {
-					break
-				}
-			}
-		}()
-		defer pc.RemoveTrack(rtpSender)
+		defer remove()
 	}
 
 	for {
@@ -65,8 +94,6 @@ func CopyTracks(sid string, pc TrackHandler, c *av.RTPMuxContext) error {
 		}
 	}
 }
-
-var _ TrackHandler = (*webrtc.PeerConnection)(nil)
 
 type TCPServer interface {
 	Serve(net.Listener) error

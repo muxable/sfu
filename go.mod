@@ -8,7 +8,7 @@ require (
 	github.com/muxable/rtptools v0.1.6
 	github.com/muxable/signal v0.0.0-20220222152720-780c4a7723b5
 	github.com/muxable/transcoder v0.4.1
-	github.com/pion/ion-sdk-go v0.7.0
+	github.com/pion/ion-sdk-go v0.7.1-0.20220120062900-5373ebf54caf
 	github.com/pion/rtcp v1.2.9
 	github.com/pion/rtp v1.7.4
 	github.com/pion/rtpio v0.1.4
