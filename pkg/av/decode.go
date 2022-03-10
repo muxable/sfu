@@ -38,7 +38,7 @@ func (c *DecodeContext) init() error {
 			return errors.New("failed to find decoder")
 		}
 
-		decoderctx := C.avcodec_alloc_context3(stream.codec.codec)
+		decoderctx := C.avcodec_alloc_context3(codec)
 		if decoderctx == nil {
 			return errors.New("failed to create decoder context")
 		}
