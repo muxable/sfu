@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/muxable/sfu/pkg/cdn"
 	"github.com/muxable/sfu/pkg/server"
-	sdk "github.com/pion/ion-sdk-go"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -43,37 +43,19 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
-	// webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
 	rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
-	toAddr := flag.String("to", "34.145.147.32:50051", "The address to send to")
+	srtAddr := flag.String("srt", "0.0.0.0:1935", "The address to receive from")
+	jsonAddr := flag.String("json", "0.0.0.0:7000", "The address to receive from")
 	flag.Parse()
 
-	connector := sdk.NewConnector(*toAddr)
+	node := cdn.NewLocalCDN()
 
-	th := server.NewRTCTrackHandler(connector)
+	th := server.NewCDNHandler(node)
 
 	go server.RunRTPServer(*rtpAddr, th)
 	go server.RunRTMPServer(*rtmpAddr, th)
+	go server.RunSRTServer(*srtAddr, th, node)
+	go server.RunJSONServer(*jsonAddr, node)
 
 	select{}
 }
-
-// func runWebRTCServer(addr string, out chan webrtc.TrackLocal) error {
-// 	grpcAddr, err := net.ResolveTCPAddr("tcp", addr)
-// 	if err != nil {
-// 		log.Fatal().Err(err).Msg("failed to resolve TCP address")
-// 	}
-// 	grpcConn, err := net.ListenTCP("tcp", grpcAddr)
-// 	if err != nil {
-// 		log.Fatal().Err(err).Msg("failed to listen on TCP")
-// 	}
-
-// 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port:0})
-// 	if err != nil {
-// 		log.Fatal().Err(err).Msg("failed to listen on UDP")
-// 	}
-
-// 	zap.L().Info("listening for WebRTC", zap.String("addr", grpcAddr.String()))
-
-// 	return server.ServeWebRTC(udpConn, grpcConn, out)
-// }

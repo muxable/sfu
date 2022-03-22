@@ -4,7 +4,6 @@ s=No Name
 c=IN IP4 127.0.0.1
 t=0 0
 a=tool:libavformat 58.76.100
-m=audio 5002 RTP/AVP 97
-b=AS:69
-a=rtpmap:97 MPEG4-GENERIC/44100/1
-a=fmtp:97 profile-level-id=1;mode=AAC-hbr;sizelength=13;indexlength=3;indexdeltalength=3; config=120856E500
+m=audio 5002 RTP/AVP 111
+a=rtpmap:111 opus/48000/2
+a=fmtp:111

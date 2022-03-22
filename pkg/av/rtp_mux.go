@@ -10,14 +10,13 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
-	"sync"
 	"unsafe"
 
 	"github.com/mattn/go-pointer"
 	"github.com/pion/rtp"
+	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/sdp"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
@@ -27,67 +26,35 @@ var (
 	crtp = C.CString("rtp")
 )
 
-type result struct {
-	p *rtp.Packet
-	e error
-}
-
 type RTPMuxContext struct {
 	avformatctxs []*C.AVFormatContext
-	packet       *AVPacket
-	encoder      *EncodeContext
-	pch          chan *result
+	Sink         rtpio.RTPWriteCloser
+	packet       *rtp.Packet
 }
 
-func NewRTPMuxer(encoder *EncodeContext) *RTPMuxContext {
-	c := &RTPMuxContext{
-		packet:  NewAVPacket(),
-		encoder: encoder,
-		pch:     make(chan *result, 8),  // we need a small buffer here to avoid blocking initialization.
-	}
-	return c
-}
-
-//export goWriteRTPPacketFunc
-func goWriteRTPPacketFunc(opaque unsafe.Pointer, buf *C.uint8_t, bufsize C.int) C.int {
-	m := pointer.Restore(opaque).(*RTPMuxContext)
-	b := C.GoBytes(unsafe.Pointer(buf), bufsize)
-	p := &rtp.Packet{}
-	if err := p.Unmarshal(b); err != nil {
-		zap.L().Error("failed to unmarshal rtp packet", zap.Error(err))
-		return C.int(-1)
-	}
-	m.pch <- &result{p: p}
-	return bufsize
-}
-
-func (c *RTPMuxContext) Initialize() error {
-	if err := c.encoder.init(); err != nil {
-		return err
-	}
-
+func NewRTPMuxer(params []*AVCodecParameters) (*RTPMuxContext, error) {
 	outputformat := C.av_guess_format(crtp, nil, nil)
 	if outputformat == nil {
-		return errors.New("failed to find rtp output format")
+		return nil, errors.New("failed to find rtp output format")
 	}
 
 	buf := C.av_malloc(1200)
 	if buf == nil {
-		return errors.New("failed to allocate buffer")
+		return nil, errors.New("failed to allocate buffer")
 	}
 
-	var wg sync.WaitGroup
+	c := &RTPMuxContext{avformatctxs: make([]*C.AVFormatContext, len(params)), packet: &rtp.Packet{}}
 
-	for i := 0; i < c.encoder.decoder.Len(); i++ {
+	for i, param := range params {
 		var avformatctx *C.AVFormatContext
 
 		if averr := C.avformat_alloc_output_context2(&avformatctx, outputformat, nil, nil); averr < 0 {
-			return av_err("avformat_alloc_output_context2", averr)
+			return nil, av_err("avformat_alloc_output_context2", averr)
 		}
 
 		avioctx := C.avio_alloc_context((*C.uchar)(buf), 1200, 1, pointer.Save(c), nil, (*[0]byte)(C.cgoWriteRTPPacketFunc), nil)
 		if avioctx == nil {
-			return errors.New("failed to create avio context")
+			return nil, errors.New("failed to create avio context")
 		}
 
 		avioctx.max_packet_size = 1200
@@ -96,61 +63,87 @@ func (c *RTPMuxContext) Initialize() error {
 
 		avformatstream := C.avformat_new_stream(avformatctx, nil)
 		if avformatstream == nil {
-			return errors.New("failed to create rtp stream")
+			return nil, errors.New("failed to create rtp stream")
 		}
 
-		if averr := C.avcodec_parameters_from_context(avformatstream.codecpar, c.encoder.encoderctxs[i]); averr < 0 {
-			return av_err("avcodec_parameters_from_context", averr)
+		if averr := C.avcodec_parameters_copy(avformatstream.codecpar, param.codecpar); averr < 0 {
+			return nil, av_err("avcodec_parameters_copy", averr)
 		}
 
 		var opts *C.AVDictionary
 		if averr := C.av_dict_set_int(&opts, C.CString("payload_type"), C.int64_t(96+i), 0); averr < 0 {
-			return av_err("av_dict_set_int", averr)
+			return nil, av_err("av_dict_set_int", averr)
+		}
+		if averr := C.av_dict_set(&opts, C.CString("strict"), C.CString("experimental"), 0); averr < 0 {
+			return nil, av_err("av_dict_set_int", averr)
 		}
 		if averr := C.avformat_write_header(avformatctx, &opts); averr < 0 {
-			return av_err("avformat_write_header", averr)
+			return nil, av_err("avformat_write_header", averr)
 		}
 
-		c.avformatctxs = append(c.avformatctxs, avformatctx)
-
-		wg.Add(1)
-		go func(i int) {
-			for {
-				if err := c.encoder.ReadAVPacket(i, c.packet); err != nil {
-					if err != io.EOF {
-						c.pch <- &result{e: err}
-					}
-					break
-				}
-				// stream index is always zero because there's n contexts, one stream each.
-				c.packet.packet.stream_index = 0
-				if averr := C.av_write_frame(c.avformatctxs[i], c.packet.packet); averr < 0 {
-					c.pch <- &result{e: av_err("av_write_frame", averr)}
-					break
-				}
-			}
-			if averr := C.av_write_trailer(c.avformatctxs[i]); averr < 0 {
-				c.pch <- &result{e: av_err("av_write_trailer", averr)}
-			}
-			wg.Done()
-		}(i)
+		c.avformatctxs[i] = avformatctx
 	}
-	
-	// cleanup thread
-	go func() {
-		wg.Wait()
-		close(c.pch)
-	}()
 
+	return c, nil
+}
+
+//export goWriteRTPPacketFunc
+func goWriteRTPPacketFunc(opaque unsafe.Pointer, buf *C.uint8_t, bufsize C.int) C.int {
+	c := pointer.Restore(opaque).(*RTPMuxContext)
+	b := C.GoBytes(unsafe.Pointer(buf), bufsize)
+	if err := c.packet.Unmarshal(b); err != nil {
+		zap.L().Error("failed to unmarshal rtp packet", zap.Error(err))
+		return -1
+	}
+	if c.packet.PayloadType == 72 {
+		// ignore rtcp.
+		return bufsize
+	}
+	if sink := c.Sink; sink != nil {
+		if err := c.Sink.WriteRTP(c.packet); err != nil {
+			zap.L().Error("failed to write rtp packet", zap.Error(err))
+			return -1
+		}
+	}
+	return bufsize
+}
+
+func (c *RTPMuxContext) WriteAVPacket(p *AVPacket) error {
+	avformatctx := c.avformatctxs[p.packet.stream_index]
+	// this can happen when draining.
+	if avformatctx.nb_streams == 0 {
+		return nil
+	}
+	p.packet.stream_index = 0
+	if averr := C.av_write_frame(avformatctx, p.packet); averr < 0 {
+		return av_err("av_write_frame", averr)
+	}
 	return nil
 }
 
-func (c *RTPMuxContext) ReadRTP() (*rtp.Packet, error) {
-	r, ok := <-c.pch
-	if !ok {
-		return nil, io.EOF
+func (c *RTPMuxContext) Close() error {
+	// for _, avformatctx := range c.avformatctxs {
+	// 	if averr := C.av_write_frame(avformatctx, nil); averr < 0 {
+	// 		return av_err("av_write_frame", averr)
+	// 	}
+
+	// 	if averr := C.av_write_trailer(avformatctx); averr < 0 {
+	// 		return av_err("av_write_trailer", averr)
+	// 	}
+	// }
+	
+	// close the sink
+	if sink := c.Sink; sink != nil {
+		if err := sink.Close(); err != nil {
+			return err
+		}
 	}
-	return r.p, r.e
+
+	// for _, avformatctx := range c.avformatctxs {
+	// 	C.avformat_free_context(avformatctx)
+	// }
+
+	return nil
 }
 
 func (c *RTPMuxContext) RTPCodecParameters() ([]*webrtc.RTPCodecParameters, error) {

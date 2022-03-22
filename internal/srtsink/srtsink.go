@@ -75,7 +75,6 @@ func NewSRTSink(in rtpio.RTPReader) error {
 						chunk = 1316
 					}
 					for _, s := range sink.videoSinks {
-						log.Printf("writing %x", data[:chunk])
 						if _, err := s.Write(data[:chunk]); err != nil {
 							log.Error().Err(err).Msg("error sending video packet")
 						}

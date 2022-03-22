@@ -3,17 +3,18 @@ module github.com/muxable/sfu
 go 1.17
 
 require (
+	github.com/google/uuid v1.3.0
 	github.com/haivision/srtgo v0.0.0-20211019211331-3f0cef2e19ee
 	github.com/mattn/go-pointer v0.0.1
 	github.com/muxable/rtptools v0.1.6
-	github.com/muxable/signal v0.0.0-20220222152720-780c4a7723b5
+	github.com/muxable/signal v0.0.0-20220312145144-4c0e0ca92a2c
 	github.com/muxable/transcoder v0.4.1
 	github.com/pion/ion-sdk-go v0.7.1-0.20220120062900-5373ebf54caf
+	github.com/pion/mediadevices v0.3.3-0.20220308090901-9bb5755cd24b
 	github.com/pion/rtcp v1.2.9
 	github.com/pion/rtp v1.7.4
 	github.com/pion/rtpio v0.1.4
 	github.com/pion/sdp v1.3.0
-	github.com/pion/sdp/v3 v3.0.4
 	github.com/pion/webrtc/v3 v3.1.23
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
@@ -34,7 +35,7 @@ require (
 	github.com/ebml-go/ebml v0.0.0-20160925193348-ca8851a10894 // indirect
 	github.com/ebml-go/webm v0.0.0-20160924163542-629e38feef2a // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
-	github.com/google/uuid v1.3.0 // indirect
+	github.com/gorilla/websocket v1.5.0
 	github.com/hashicorp/errwrap v1.0.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.8 // indirect
@@ -53,6 +54,7 @@ require (
 	github.com/pion/mdns v0.0.5 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/sctp v1.8.2 // indirect
+	github.com/pion/sdp/v3 v3.0.4 // indirect
 	github.com/pion/srtp/v2 v2.0.5 // indirect
 	github.com/pion/stun v0.3.5 // indirect
 	github.com/pion/transport v0.13.0 // indirect
@@ -62,10 +64,13 @@ require (
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
+	github.com/sourcegraph/jsonrpc2 v0.1.0
 	github.com/yutopp/go-amf0 v0.0.0-20180803120851-48851794bb1f // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
 	golang.org/x/crypto v0.0.0-20220131195533-30dcbda58838 // indirect
+	golang.org/x/image v0.0.0-20210628002857-a66eb6448b8d // indirect
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20220128215802-99c3d69c2c27 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.3.7 // indirect

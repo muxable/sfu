@@ -1,14 +1,18 @@
 package server
 
 import (
+	"io"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 
-	"github.com/muxable/rtptools/pkg/rfc7005"
-	"github.com/muxable/sfu/internal/demuxer"
+	"github.com/google/uuid"
+	"github.com/muxable/sfu/internal/analyzer"
+	"github.com/muxable/sfu/internal/buffer"
 	"github.com/muxable/sfu/internal/sessionizer"
-	"github.com/muxable/sfu/pkg/av"
+	av "github.com/muxable/sfu/pkg/av"
+	"github.com/muxable/sfu/pkg/cdn"
 	"github.com/muxable/sfu/pkg/codec"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtpio/pkg/rtpio"
@@ -44,98 +48,174 @@ func RunRTPServer(addr string, th TrackHandler) error {
 			return err
 		}
 
-		senderSSRC := rand.Uint32()
+		analyze, err := analyzer.NewAnalyzer(50)
+		if err != nil {
+			return err
+		}
 
-		// this api is a bit awkward, but is less insane than lots of for loops.
-		go demuxer.NewCNAMEDemuxer(time.Now, source, source, func(cname string, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader) {
-			go rtpio.DiscardRTCP.ReadRTCPFrom(rtcpIn)
-			go demuxer.NewPayloadTypeDemuxer(time.Now, rtpIn, func(pt webrtc.PayloadType, rtpIn rtpio.RTPReader) {
-				// match with a codec.
-				codec, ok := codecs.FindByPayloadType(pt)
-				if !ok {
-					log.Warn().Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("demuxer unknown payload type")
-					// we do need to consume all the packets though.
-					go rtpio.DiscardRTP.ReadRTPFrom(rtpIn)
+		go func() {
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				rtpio.CopyRTP(analyze, source)
+				wg.Done()
+			}()
+			go func() {
+				rtpio.CopyRTCP(analyze, source)
+				wg.Done()
+			}()
+			wg.Wait()
+			analyze.Close()
+		}()
+
+		go func() {
+			params := analyze.ReadResults()
+
+			codec, ok := codecs.FindByPayloadType(params.PayloadType)
+			if !ok {
+				return
+			}
+
+			go rtpio.DiscardRTCP.ReadRTCPFrom(analyze)
+			jb := buffer.NewReorderBuffer(codec.ClockRate, 750*time.Millisecond, false)
+			go rtpio.CopyRTP(jb, analyze)
+			// write nacks periodically back to the sender
+			nackTicker := time.NewTicker(250 * time.Millisecond)
+			defer nackTicker.Stop()
+			done := make(chan bool, 1)
+			defer func() { done <- true }()
+			go func() {
+				prevMissing := make([]bool, 1<<16)
+				senderSSRC := rand.Uint32()
+				for {
+					select {
+					case <-nackTicker.C:
+						missing := jb.GetMissingSequenceNumbers(uint64(codec.ClockRate / 10))
+						if len(missing) == 0 {
+							break
+						}
+						retained := make([]uint16, 0)
+						nextMissing := make([]bool, 1<<16)
+						for _, seq := range missing {
+							if prevMissing[seq] {
+								retained = append(retained, seq)
+							}
+							nextMissing[seq] = true
+						}
+						prevMissing = nextMissing
+						nack := &rtcp.TransportLayerNack{
+							SenderSSRC: senderSSRC,
+							MediaSSRC:  uint32(source.SSRC),
+							Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
+						}
+						if err := source.WriteRTCP([]rtcp.Packet{nack}); err != nil {
+							log.Error().Err(err).Msg("failed to write NACK")
+						}
+					case <-done:
+						return
+					}
+				}
+			}()
+
+			log.Info().Str("CNAME", params.CNAME).Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(params.PayloadType)).Msg("new inbound stream")
+
+			if codec.MimeType == webrtc.MimeTypeOpus {
+				// pass the audio straight through to a track.
+				tl, err := webrtc.NewTrackLocalStaticRTP(codec.RTPCodecCapability, uuid.NewString(), params.CNAME)
+				if err != nil {
+					zap.L().Error("failed to create track", zap.Error(err))
 					return
 				}
-				log.Debug().Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("demuxer found new stream type")
-				jb, jbRTP := rfc7005.NewJitterBuffer(codec.ClockRate, 750*time.Millisecond, rtpIn)
-				// write nacks periodically back to the sender
-				nackTicker := time.NewTicker(100 * time.Millisecond)
-				defer nackTicker.Stop()
-				done := make(chan bool, 1)
-				defer func() { done <- true }()
-				go func() {
-					prevMissing := make([]bool, 1<<16)
-					for {
-						select {
-						case <-nackTicker.C:
-							missing := jb.GetMissingSequenceNumbers(uint64(codec.ClockRate / 10))
-							if len(missing) == 0 {
-								break
-							}
-							retained := make([]uint16, 0)
-							nextMissing := make([]bool, 1<<16)
-							for _, seq := range missing {
-								if prevMissing[seq] {
-									retained = append(retained, seq)
-								}
-								nextMissing[seq] = true
-							}
-							prevMissing = nextMissing
-							nack := &rtcp.TransportLayerNack{
-								SenderSSRC: senderSSRC,
-								MediaSSRC:  uint32(source.SSRC),
-								Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
-							}
-							if err := source.WriteRTCP([]rtcp.Packet{nack}); err != nil {
-								log.Error().Err(err).Msg("failed to write NACK")
-							}
-						case <-done:
-							return
-						}
+				ctl := cdn.NewCDNTrackLocalStaticRTP(tl)
+				remove, err := th(ctl)
+				if err != nil {
+					zap.L().Error("failed to add track", zap.Error(err))
+					return
+				}
+				defer remove()
+				for {
+					p, err := jb.ReadRTP()
+					if err != nil {
+						return
 					}
-				}()
-
-				log.Info().Str("CNAME", "").Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(pt)).Msg("new inbound stream")
-
-				videoCodec := webrtc.RTPCodecCapability{
-					MimeType:  webrtc.MimeTypeH264,
-					ClockRate: 90000,
+					if err := ctl.WriteRTP(p); err != nil {
+						return
+					}
 				}
-				audioCodec := webrtc.RTPCodecCapability{
-					MimeType:  webrtc.MimeTypeOpus,
-					ClockRate: 48000,
-					Channels:  2,
-				}
-				demux := av.NewRTPDemuxer(webrtc.RTPCodecParameters{
-					PayloadType: pt,
+			} else {
+				// construct the elements
+				demux, err := av.NewRTPDemuxer(webrtc.RTPCodecParameters{
+					PayloadType:        params.PayloadType,
 					RTPCodecCapability: codec.RTPCodecCapability,
-				}, jbRTP)
-				decode := av.NewDecoder(demux)
-				encode := av.NewEncoder(audioCodec, videoCodec, decode)
-				mux := av.NewRTPMuxer(encode)
-				go func() {
-					if err := CopyTracks(cname, th, mux); err != nil {
-						log.Printf("muxer terminated %v", err)
+				}, jb)
+				if err != nil {
+					zap.L().Error("failed to create demuxer", zap.Error(err))
+					return
+				}
+				streams := demux.Streams()
+				decoders := make([]*av.DecodeContext, len(streams))
+				encoders := make([]*av.EncodeContext, len(streams))
+				parameters := make([]*av.AVCodecParameters, len(streams))
+				for i, stream := range demux.Streams() {
+					decoder, err := av.NewDecoder(demux, stream)
+					if err != nil {
+						zap.L().Error("failed to create decoder", zap.Error(err))
+						return
 					}
-				}()
-				// prevSeq := uint16(0)
-				// for {
-				// 	p, err := jbRTP.ReadRTP()
-				// 	if err != nil {
-				// 		return
-				// 	}
-				// 	if p.SequenceNumber != prevSeq+1 {
-				// 		log.Warn().Uint16("PrevSeq", prevSeq).Uint16("CurrSeq", p.SequenceNumber).Msg("missing packet")
-				// 	}
-				// 	prevSeq = p.SequenceNumber
-				// 	log.Printf("%v", p)
-				// 	if err := track.WriteRTP(p); err != nil {
-				// 		log.Warn().Err(err).Msg("failed to write sample")
-				// 	}
-				// }
-			})
-		})
+					encoder, err := av.NewEncoder(webrtc.RTPCodecCapability{
+						MimeType:  webrtc.MimeTypeVP8,
+						ClockRate: 90000,
+					}, decoder)
+					if err != nil {
+						zap.L().Error("failed to create encoder", zap.Error(err))
+						return
+					}
+					decoders[i] = decoder
+					encoders[i] = encoder
+					parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
+				}
+				mux, err := av.NewRTPMuxer(parameters)
+				if err != nil {
+					zap.L().Error("failed to create muxer", zap.Error(err))
+					return
+				}
+
+				outParams, err := mux.RTPCodecParameters()
+				if err != nil {
+					zap.L().Error("failed to get codec parameters", zap.Error(err))
+					return
+				}
+				trackSink, err := NewTrackSink(outParams, params.CNAME, th)
+				if err != nil {
+					zap.L().Error("failed to create sink", zap.Error(err))
+					return
+				}
+
+				// wire them together
+				for i := 0; i < len(streams); i++ {
+					if decoder := decoders[i]; decoder != nil {
+						demux.Sinks = append(demux.Sinks, &av.IndexedSink{AVPacketWriteCloser: decoder, Index: 0})
+						decoder.Sink = encoders[i]
+						encoders[i].Sink = &av.IndexedSink{AVPacketWriteCloser: mux, Index: 0}
+					} else {
+						demux.Sinks = append(demux.Sinks, &av.IndexedSink{AVPacketWriteCloser: mux, Index: 0})
+					}
+				}
+				mux.Sink = trackSink
+
+				// TODO: validate the construction
+
+				// start the pipeline
+				if err := demux.Run(); err != nil {
+					if err != io.EOF {
+						zap.L().Error("failed to run pipeline", zap.Error(err))
+					}
+					if err := demux.Close(); err != nil {
+						zap.L().Error("failed to close pipeline", zap.Error(err))
+					}
+					return
+				}
+			}
+		}()
 	}
 }

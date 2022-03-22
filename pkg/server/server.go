@@ -2,17 +2,19 @@ package server
 
 import (
 	"fmt"
-	"net"
 
-	"github.com/muxable/sfu/pkg/av"
+	"github.com/google/uuid"
+	"github.com/muxable/sfu/pkg/cdn"
 	sdk "github.com/pion/ion-sdk-go"
+	"github.com/pion/rtp"
+	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
 )
 
-type TrackHandler func(webrtc.TrackLocal) (func() error, error)
+type TrackHandler func(*cdn.CDNTrackLocalStaticRTP) (func() error, error)
 
 func NewPeerConnectionTrackHandler(pc *webrtc.PeerConnection) TrackHandler {
-	return func(t webrtc.TrackLocal) (func() error, error) {
+	return func(t *cdn.CDNTrackLocalStaticRTP) (func() error, error) {
 		s, err := pc.AddTrack(t)
 		if err != nil {
 			return nil, err
@@ -33,7 +35,7 @@ func NewPeerConnectionTrackHandler(pc *webrtc.PeerConnection) TrackHandler {
 }
 
 func NewRTCTrackHandler(connector *sdk.Connector) TrackHandler {
-	return func(t webrtc.TrackLocal) (func() error, error) {
+	return func(t *cdn.CDNTrackLocalStaticRTP) (func() error, error) {
 		rtc, err := sdk.NewRTC(connector)
 		if err != nil {
 			return nil, err
@@ -46,59 +48,72 @@ func NewRTCTrackHandler(connector *sdk.Connector) TrackHandler {
 			return nil, err
 		}
 		return func() error {
-			return rtc.UnPublish(s...)
+			if err := rtc.UnPublish(s...); err != nil {
+				return err
+			}
+			rtc.Close()
+			return nil
 		}, nil
 	}
 }
 
-func CopyTracks(sid string, th TrackHandler, c *av.RTPMuxContext) error {
-	if err := c.Initialize(); err != nil {
-		return err
+func NewCDNHandler(node *cdn.LocalCDN) TrackHandler {
+	return func(tl *cdn.CDNTrackLocalStaticRTP) (func() error, error) {
+		unpublish := node.Publish(tl)
+		return func() error {
+			unpublish()
+			return nil
+		}, nil
 	}
+}
 
-	params, err := c.RTPCodecParameters()
-	if err != nil {
-		return err
-	}
+type TrackSink struct {
+	tracks  map[uint8]*cdn.CDNTrackLocalStaticRTP
+	closers []func() error
+}
 
+func NewTrackSink(params []*webrtc.RTPCodecParameters, sid string, th TrackHandler) (*TrackSink, error) {
 	// create local tracks.
-	tracks := make(map[uint8]*webrtc.TrackLocalStaticRTP)
-	for _, p := range params {
+	tracks := make(map[uint8]*cdn.CDNTrackLocalStaticRTP)
+	closers := make([]func() error, len(params))
+	for i, p := range params {
 		if p == nil {
 			continue
 		}
-		track, err := webrtc.NewTrackLocalStaticRTP(p.RTPCodecCapability, fmt.Sprintf("%s-%d", sid, p.PayloadType), sid)
+		track, err := webrtc.NewTrackLocalStaticRTP(p.RTPCodecCapability, uuid.NewString(), sid)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		tracks[uint8(p.PayloadType)] = track
-		remove, err := th(track)
+		cdntrack := cdn.NewCDNTrackLocalStaticRTP(track)
+		tracks[uint8(p.PayloadType)] = cdntrack
+		remove, err := th(cdntrack)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		defer remove()
+		closers[i] = remove
 	}
 
-	for {
-		p, err := c.ReadRTP()
-		if err != nil {
-			return err
-		}
+	return &TrackSink{tracks: tracks, closers: closers}, nil
+}
 
-		track, ok := tracks[p.PayloadType]
-		if !ok {
-			continue
-		}
-		if err := track.WriteRTP(p); err != nil {
+func (s *TrackSink) WriteRTP(p *rtp.Packet) error {
+	track, ok := s.tracks[p.PayloadType]
+	if !ok {
+		return fmt.Errorf("no track for payload type %d", p.PayloadType)
+	}
+	if err := track.WriteRTP(p); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *TrackSink) Close() error {
+	for _, c := range s.closers {
+		if err := c(); err != nil {
 			return err
 		}
 	}
+	return nil
 }
 
-type TCPServer interface {
-	Serve(net.Listener) error
-}
-
-type UDPServer interface {
-	Serve(*net.UDPConn) error
-}
+var _ rtpio.RTPWriteCloser = (*TrackSink)(nil)

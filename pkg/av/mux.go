@@ -10,7 +10,6 @@ import "C"
 import (
 	"errors"
 	"io"
-	"sync"
 	"unsafe"
 
 	"github.com/mattn/go-pointer"
@@ -24,116 +23,97 @@ type RawMuxContext struct {
 	avformatctx *C.AVFormatContext
 	packet      *AVPacket
 	encoder     *EncodeContext
-	format      string
-	pch         chan *buffer
+	Sink        io.WriteCloser
+
+	headerWritten bool
 }
 
-func NewRawMuxer(format string, encoder *EncodeContext) *RawMuxContext {
-	c := &RawMuxContext{
-		packet:  NewAVPacket(),
-		encoder: encoder,
-		format:  format,
-		pch:     make(chan *buffer, 8), // we need a small buffer here to avoid blocking initialization.
+func NewRawMuxer(format string, params []*AVCodecParameters) (*RawMuxContext, error) {
+	cformat := C.CString(format)
+	defer C.free(unsafe.Pointer(cformat))
+
+	outputformat := C.av_guess_format(cformat, nil, nil)
+	if outputformat == nil {
+		return nil, errors.New("failed to find rtp output format")
 	}
-	return c
+
+	buf := C.av_malloc(1316)
+	if buf == nil {
+		return nil, errors.New("failed to allocate buffer")
+	}
+
+	var avformatctx *C.AVFormatContext
+
+	if averr := C.avformat_alloc_output_context2(&avformatctx, outputformat, nil, nil); averr < 0 {
+		return nil, av_err("avformat_alloc_output_context2", averr)
+	}
+
+	c := &RawMuxContext{avformatctx: avformatctx}
+
+	avioctx := C.avio_alloc_context((*C.uchar)(buf), 1316, 1, pointer.Save(c), nil, (*[0]byte)(C.cgoWritePacketFunc), nil)
+	if avioctx == nil {
+		return nil, errors.New("failed to create avio context")
+	}
+
+	avioctx.max_packet_size = 1316
+
+	avformatctx.flags |= C.AVFMT_FLAG_NOBUFFER
+	avformatctx.pb = avioctx
+
+	for _, param := range params {
+		avformatstream := C.avformat_new_stream(avformatctx, nil)
+		if avformatstream == nil {
+			return nil, errors.New("failed to create rtp stream")
+		}
+
+		if averr := C.avcodec_parameters_copy(avformatstream.codecpar, param.codecpar); averr < 0 {
+			return nil, av_err("avcodec_parameters_copy", averr)
+		}
+	}
+	return c, nil
 }
 
 //export goWritePacketFunc
 func goWritePacketFunc(opaque unsafe.Pointer, buf *C.uint8_t, bufsize C.int) C.int {
 	m := pointer.Restore(opaque).(*RawMuxContext)
-	m.pch <- &buffer{b: C.GoBytes(unsafe.Pointer(buf), bufsize)}
-	return bufsize
+	n, err := m.Sink.Write(C.GoBytes(unsafe.Pointer(buf), bufsize))
+	if err != nil {
+		return -1
+	}
+	return C.int(n)
 }
 
-func (c *RawMuxContext) Initialize() error {
-	if err := c.encoder.init(); err != nil {
-		return err
-	}
-
-	cformat := C.CString(c.format)
-	defer C.free(unsafe.Pointer(cformat))
-
-	outputformat := C.av_guess_format(cformat, nil, nil)
-	if outputformat == nil {
-		return errors.New("failed to find rtp output format")
-	}
-
-	buf := C.av_malloc(1200)
-	if buf == nil {
-		return errors.New("failed to allocate buffer")
-	}
-
-	var wg sync.WaitGroup
-	var avformatctx *C.AVFormatContext
-
-	if averr := C.avformat_alloc_output_context2(&avformatctx, outputformat, nil, nil); averr < 0 {
-		return av_err("avformat_alloc_output_context2", averr)
-	}
-
-	avioctx := C.avio_alloc_context((*C.uchar)(buf), 1500, 1, pointer.Save(c), nil, (*[0]byte)(C.cgoWritePacketFunc), nil)
-	if avioctx == nil {
-		return errors.New("failed to create avio context")
-	}
-
-	avioctx.max_packet_size = 1500
-
-	avformatctx.pb = avioctx
-
-	for i := 0; i < c.encoder.decoder.Len(); i++ {
-		avformatstream := C.avformat_new_stream(avformatctx, nil)
-		if avformatstream == nil {
-			return errors.New("failed to create rtp stream")
+func (c *RawMuxContext) WriteAVPacket(p *AVPacket) error {
+	if !c.headerWritten {
+		// write thread
+		if averr := C.avformat_write_header(c.avformatctx, nil); averr < 0 {
+			return av_err("avformat_write_header", averr)
 		}
-
-		if averr := C.avcodec_parameters_from_context(avformatstream.codecpar, c.encoder.encoderctxs[i]); averr < 0 {
-			return av_err("avcodec_parameters_from_context", averr)
-		}
+		c.headerWritten = true
 	}
-	// write thread
-	if averr := C.avformat_write_header(avformatctx, nil); averr < 0 {
-		return av_err("avformat_write_header", averr)
+	if averr := C.av_interleaved_write_frame(c.avformatctx, p.packet); averr < 0 {
+		return av_err("av_interleaved_write_frame", averr)
 	}
-	go func() {
-		for i := 0; i < c.encoder.decoder.Len(); i++ {
-			wg.Add(1)
-			go func(i int) {
-				for {
-					if err := c.encoder.ReadAVPacket(i, c.packet); err != nil {
-						if err != io.EOF {
-							c.pch <- &buffer{e: err}
-						}
-						break
-					}
-					// stream index is always zero because there's n contexts, one stream each.
-					c.packet.packet.stream_index = 0
-					if averr := C.av_interleaved_write_frame(c.avformatctx, c.packet.packet); averr < 0 {
-						c.pch <- &buffer{e: av_err("av_interleaved_write_frame", averr)}
-						break
-					}
-				}
-				wg.Done()
-			}(i)
-		}
-		wg.Wait()
-		if averr := C.av_write_trailer(c.avformatctx); averr < 0 {
-			c.pch <- &buffer{e: av_err("av_write_trailer", averr)}
-		}
-		close(c.pch)
-	}()
-
 	return nil
 }
 
-func (c *RawMuxContext) Read(buf []byte) (int, error) {
-	r, ok := <-c.pch
-	if !ok {
-		return 0, io.EOF
+func (c *RawMuxContext) Close() error {
+	if averr := C.av_interleaved_write_frame(c.avformatctx, nil); averr < 0 {
+		return av_err("av_interleaved_write_frame", averr)
 	}
-	if r.e != nil {
-		return 0, r.e
+
+	if averr := C.av_write_trailer(c.avformatctx); averr < 0 {
+		return av_err("av_write_trailer", averr)
 	}
-	if len(r.b) < len(buf) {
-		return 0, io.ErrShortBuffer
+
+	// close the sink
+	if sink := c.Sink; sink != nil {
+		if err := sink.Close(); err != nil {
+			return err
+		}
 	}
-	return copy(buf, r.b), nil
+
+	C.avformat_free_context(c.avformatctx)
+
+	return nil
 }

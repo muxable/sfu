@@ -17,6 +17,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 	"github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -26,12 +27,13 @@ type ccfb struct {
 	sender *net.UDPAddr
 }
 
-// SSRCConn is a connection that operates on the SSRC level instead of on the sender level.
-type SSRCConn struct {
+// SSRCMux is a connection that operates on the SSRC level instead of on the sender level.
+type SSRCMux struct {
 	sync.RWMutex
 
 	*net.UDPConn
-	sources map[webrtc.SSRC]*net.UDPAddr
+
+	bondedAddrs map[string]*net.UDPAddr
 
 	ccfb   map[string]*ccfb
 	cancel context.CancelFunc
@@ -47,12 +49,12 @@ var udpOOBSize = func() int {
 }()
 
 // NewSSRCMux wraps a net.UDPConn and provides a way to track the SSRCs of the sender.
-func NewSSRCMux(conn *net.UDPConn) (*SSRCConn, error) {
+func NewSSRCMux(conn *net.UDPConn) (*SSRCMux, error) {
 	ecn.EnableExplicitCongestionNotification(conn)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := &SSRCConn{
+	s := &SSRCMux{
 		UDPConn: conn,
 		sources: make(map[webrtc.SSRC]*net.UDPAddr),
 		ccfb:    make(map[string]*ccfb),
@@ -101,14 +103,44 @@ func NewSSRCMux(conn *net.UDPConn) (*SSRCConn, error) {
 	return s, nil
 }
 
-func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
+func (s *SSRCMux) masqueradedAddr(addr *net.UDPAddr) *net.UDPAddr {
+	bonded, ok := s.bondedAddrs[addr.String()]
+	if !ok {
+		return addr
+	}
+	return bonded
+}
+
+func (s *SSRCMux) ReadFrom(p []byte) (int, net.Addr, error) {
 	oob := make([]byte, udpOOBSize)
 	n, oobn, _, addr, err := s.UDPConn.ReadMsgUDP(p, oob)
-	if err != nil || !isRTPRTCP(p) {
-		return n, addr, err
+	if err != nil {
+		return n, s.masqueradedAddr(addr), err
 	}
 	ts := time.Now()
-	// this might be an RTP/RTCP packet, so try to decode the header.
+	// check if it's one of our bonding request packets.
+	r := &BondingRequest{}
+	if err := r.Unmarshal(p[:n]); err != nil {
+		return n, s.masqueradedAddr(addr), err
+	}
+	// this is a bonding request, so we need to remap this address to the requested key.
+	s.bondedAddrs[addr.String()] = r.KeyAddr()
+	// then respond with a bonding response.
+	response := &BondingResponse{
+		ntp:   r.ntp,
+		delay: x_time.GoDurationToNTP(time.Since(ts)),
+	}
+	payload, err := response.Marshal()
+	if err != nil {
+		zap.L().Error("failed to marshal bonding response", zap.Error(err))
+		return n, s.masqueradedAddr(addr), err
+	}
+	if _, err := s.UDPConn.WriteToUDP(payload, addr); err != nil {
+		zap.L().Error("failed to send bonding response", zap.Error(err))
+	}
+
+	return n, s.masqueradedAddr(addr), err
+
 	h := &rtcp.Header{}
 	if err := h.Unmarshal(p); err != nil {
 		// couldn't unmarshal so forward it along blindly.
@@ -169,16 +201,17 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 			// not a valid rtp/rtcp packet.
 			return n, addr, nil
 		}
-		ssrc := webrtc.SSRC(header.SSRC)
 		s.Lock()
 		defer s.Unlock()
-		s.sources[ssrc] = addr
+		s.sources[webrtc.SSRC(header.SSRC)] = addr
+		ip := []byte{0, 0, 0, 0}
+		binary.BigEndian.PutUint32(ip, header.SSRC)
 
 		// log this with congestion control.
 		ecn, err := ecn.CheckExplicitCongestionNotification(oob[:oobn])
 		if err != nil {
 			log.Error().Err(err).Msg("failed to check ecn")
-			return n, SSRCAddr(ssrc), nil
+			return n, addr, nil
 		}
 
 		// get the twcc header sequence number.
@@ -186,7 +219,7 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		if ext := header.GetExtension(5); ext != nil {
 			if err := tccExt.Unmarshal(ext); err != nil {
 				log.Error().Err(err).Msg("failed to unmarshal twcc extension")
-				return n, SSRCAddr(ssrc), nil
+				return n, addr, nil
 			}
 		}
 
@@ -198,30 +231,32 @@ func (s *SSRCConn) ReadFrom(p []byte) (int, net.Addr, error) {
 			}
 			s.ccfb[addr.String()] = fb
 		}
-		if err := fb.stream.AddPacket(time.Now(), ssrc, tccExt.TransportSequence, ecn); err != nil {
+		if err := fb.stream.AddPacket(time.Now(), webrtc.SSRC(header.SSRC), tccExt.TransportSequence, ecn); err != nil {
 			log.Error().Err(err).Msg("failed to add packet to congestion control")
 		}
-		return n, SSRCAddr(ssrc), nil
+		return n, addr, nil
 	}
 }
 
-func (s *SSRCConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+func (s *SSRCMux) WriteTo(p []byte, addr net.Addr) (int, error) {
 	switch addr := addr.(type) {
-	case SSRCAddr:
-		// this is directed at the ssrc.
-		dest, ok := s.sources[webrtc.SSRC(addr)]
-		if !ok {
-			return 0, fmt.Errorf("no such ssrc %d", addr)
+	case *net.UDPAddr:
+		if addr.Port == 0 {
+			ssrc := webrtc.SSRC(binary.BigEndian.Uint32(addr.IP))
+			// this is directed at the ssrc.
+			dest, ok := s.sources[ssrc]
+			if !ok {
+				return 0, fmt.Errorf("no such ssrc %v", addr)
+			}
+			return s.UDPConn.WriteTo(p, dest)
 		}
-		return s.UDPConn.WriteTo(p, dest)
-	default:
-		return s.UDPConn.WriteTo(p, addr)
 	}
+	return s.UDPConn.WriteTo(p, addr)
 }
 
-func (s *SSRCConn) Close() error {
+func (s *SSRCMux) Close() error {
 	s.cancel()
 	return s.UDPConn.Close()
 }
 
-var _ net.PacketConn = (*SSRCConn)(nil)
+var _ net.PacketConn = (*SSRCMux)(nil)
