@@ -33,8 +33,8 @@ func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error)
 	}
 
 	decoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY
-	decoderctx.flags2 |= C.AV_CODEC_FLAG2_FAST  // accept artifacts at slice edges, https://stackoverflow.com/a/54873148/86433
-	decoderctx.flags2 |= C.AV_CODEC_FLAG2_CHUNKS  // indicate that the we might truncate at packet boundaries
+	decoderctx.flags2 |= C.AV_CODEC_FLAG2_FAST   // accept artifacts at slice edges, https://stackoverflow.com/a/54873148/86433
+	decoderctx.flags2 |= C.AV_CODEC_FLAG2_CHUNKS // indicate that the we might truncate at packet boundaries
 
 	if averr := C.avcodec_open2(decoderctx, codec, nil); averr < 0 {
 		return nil, av_err("avcodec_open2", averr)
