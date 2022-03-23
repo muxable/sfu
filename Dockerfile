@@ -2,7 +2,9 @@
 
 FROM golang:1.18-alpine
 
-RUN apk add ffmpeg-dev
+RUN apk update
+RUN apk upgrade
+RUN apk add ffmpeg-dev gcc musl-dev libsrt-dev
 
 WORKDIR /app
 
