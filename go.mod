@@ -8,7 +8,6 @@ require (
 	github.com/mattn/go-pointer v0.0.1
 	github.com/muxable/rtptools v0.1.6
 	github.com/muxable/signal v0.0.0-20220312145144-4c0e0ca92a2c
-	github.com/muxable/transcoder v0.4.1
 	github.com/pion/ion-sdk-go v0.7.1-0.20220120062900-5373ebf54caf
 	github.com/pion/mediadevices v0.3.3-0.20220308090901-9bb5755cd24b
 	github.com/pion/rtcp v1.2.9
@@ -27,6 +26,8 @@ require (
 	google.golang.org/grpc v1.44.0
 	google.golang.org/protobuf v1.27.1
 )
+
+require github.com/google/go-cmp v0.5.7 // indirect
 
 require (
 	github.com/benbjohnson/clock v1.3.0 // indirect
@@ -47,7 +48,7 @@ require (
 	github.com/pion/datachannel v1.5.2 // indirect
 	github.com/pion/dtls/v2 v2.1.2 // indirect
 	github.com/pion/ice/v2 v2.1.20 // indirect
-	github.com/pion/interceptor v0.1.7 // indirect
+	github.com/pion/interceptor v0.1.7
 	github.com/pion/ion v1.10.0 // indirect
 	github.com/pion/ion-log v1.2.1 // indirect
 	github.com/pion/logging v0.2.2 // indirect
@@ -64,7 +65,6 @@ require (
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	github.com/sourcegraph/jsonrpc2 v0.1.0
 	github.com/yutopp/go-amf0 v0.0.0-20180803120851-48851794bb1f // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
