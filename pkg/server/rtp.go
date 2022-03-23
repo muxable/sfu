@@ -77,7 +77,7 @@ func RunRTPServer(addr string, th TrackHandler) error {
 			}
 
 			go rtpio.DiscardRTCP.ReadRTCPFrom(analyze)
-			jb := buffer.NewReorderBuffer(codec.ClockRate, 750*time.Millisecond, false)
+			jb := buffer.NewReorderBuffer(codec.ClockRate, 750*time.Millisecond)
 			go rtpio.CopyRTP(jb, analyze)
 			// write nacks periodically back to the sender
 			nackTicker := time.NewTicker(250 * time.Millisecond)
@@ -90,7 +90,7 @@ func RunRTPServer(addr string, th TrackHandler) error {
 				for {
 					select {
 					case <-nackTicker.C:
-						missing := jb.GetMissingSequenceNumbers(uint64(codec.ClockRate / 10))
+						missing := jb.MissingSequenceNumbers()
 						if len(missing) == 0 {
 							break
 						}
