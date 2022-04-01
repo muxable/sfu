@@ -10,13 +10,14 @@ import "C"
 import "runtime"
 
 func init() {
-	C.av_log_set_level(56)
+	C.av_log_set_level(32)
 }
 
 // These are useful to avoid leaking the cgo interface.
 
 type AVPacket struct {
-	packet *C.AVPacket
+	packet   *C.AVPacket
+	timebase C.AVRational // not owned by the packet, just a way to pass information between the demuxer/decoder and encoder/muxer.
 }
 
 func NewAVPacket() *AVPacket {
@@ -110,5 +111,5 @@ func (s *AVStream) AVMediaType() AVMediaType {
 
 type IndexedSink struct {
 	AVPacketWriteCloser
-	Index  int
+	Index int
 }

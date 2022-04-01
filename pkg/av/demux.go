@@ -18,11 +18,11 @@ import (
 )
 
 type DemuxContext struct {
-	Sinks             []*IndexedSink
-	avformatctx       *C.AVFormatContext
-	rtpin             rtpio.RTPReader
-	rawin             io.Reader
-	packet            *AVPacket
+	Sinks       []*IndexedSink
+	avformatctx *C.AVFormatContext
+	rtpin       rtpio.RTPReader
+	rawin       io.Reader
+	packet      *AVPacket
 }
 
 var (
@@ -198,6 +198,7 @@ func (c *DemuxContext) Run() error {
 		}
 		if sink := c.Sinks[c.packet.packet.stream_index]; sink != nil {
 			c.packet.packet.stream_index = C.int(sink.Index)
+			c.packet.timebase = streams[sink.Index].stream.time_base
 			if err := sink.WriteAVPacket(c.packet); err != nil {
 				return err
 			}

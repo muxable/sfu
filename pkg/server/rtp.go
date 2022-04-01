@@ -21,7 +21,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func RunRTPServer(addr string, th TrackHandler) error {
+func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RTPCodecCapability) error {
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return err
@@ -162,10 +162,7 @@ func RunRTPServer(addr string, th TrackHandler) error {
 						zap.L().Error("failed to create decoder", zap.Error(err))
 						return
 					}
-					encoder, err := av.NewEncoder(webrtc.RTPCodecCapability{
-						MimeType:  webrtc.MimeTypeVP8,
-						ClockRate: 90000,
-					}, decoder)
+					encoder, err := av.NewEncoder(videoCodec, decoder)
 					if err != nil {
 						zap.L().Error("failed to create encoder", zap.Error(err))
 						return

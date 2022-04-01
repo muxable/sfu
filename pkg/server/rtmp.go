@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func RunRTMPServer(addr string, trackHandler TrackHandler) error {
+func RunRTMPServer(addr string, trackHandler TrackHandler, videoCodec, audioCodec webrtc.RTPCodecCapability) error {
 	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func RunRTMPServer(addr string, trackHandler TrackHandler) error {
 	s := rtmp.NewServer(&rtmp.ServerConfig{
 		OnConnect: func(conn net.Conn) (io.ReadWriteCloser, *rtmp.ConnConfig) {
 			return conn, &rtmp.ConnConfig{
-				Handler: &RTMPHandler{trackHandler: trackHandler},
+				Handler: &RTMPHandler{trackHandler: trackHandler, videoCodec: videoCodec, audioCodec: audioCodec},
 				ControlState: rtmp.StreamControlStateConfig{
 					DefaultBandwidthWindowSize: 6 * 1024 * 1024 / 8,
 				},
@@ -45,6 +45,8 @@ type RTMPHandler struct {
 	w   io.WriteCloser
 	enc *flv.Encoder
 
+	videoCodec, audioCodec webrtc.RTPCodecCapability
+
 	trackHandler TrackHandler
 }
 
@@ -58,15 +60,6 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 
 	r, w := io.Pipe()
 	go func() {
-		videoCodec := webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeVP8,
-			ClockRate: 90000,
-		}
-		audioCodec := webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeOpus,
-			ClockRate: 48000,
-			Channels:  2,
-		}
 
 		// construct the elements
 		demux, err := av.NewRawDemuxer(r)
@@ -87,7 +80,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 			}
 			switch stream.AVMediaType() {
 			case av.AVMediaTypeVideo:
-				encoder, err := av.NewEncoder(videoCodec, decoder)
+				encoder, err := av.NewEncoder(h.videoCodec, decoder)
 				if err != nil {
 					zap.L().Error("failed to create encoder", zap.Error(err))
 					return
@@ -96,7 +89,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 				encoders[i] = encoder
 				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
 			case av.AVMediaTypeAudio:
-				encoder, err := av.NewEncoder(audioCodec, decoder)
+				encoder, err := av.NewEncoder(h.audioCodec, decoder)
 				if err != nil {
 					zap.L().Error("failed to create encoder", zap.Error(err))
 					return
@@ -142,7 +135,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 			encoders[i].Sink = &av.IndexedSink{AVPacketWriteCloser: mux, Index: i}
 		}
 		mux.Sink = trackSink
-		
+
 		// TODO: validate the construction
 
 		// start the pipeline

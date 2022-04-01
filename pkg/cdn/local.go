@@ -2,6 +2,7 @@ package cdn
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"go.uber.org/zap"
@@ -102,6 +103,16 @@ func (c *LocalCDN) Publish(tl *CDNTrackLocalStaticRTP) func() {
 	zap.L().Debug("publishing track", zap.String("id", tl.ID()), zap.String("kind", tl.Kind().String()), zap.String("streamID", tl.StreamID()))
 
 	c.tracks[tl.StreamID()] = append(c.tracks[tl.StreamID()], tl)
+
+	if os.Getenv("APP_ENV") != "production" {
+		// also bind an ffmpeg binding
+		ffmpeg, err := NewFFMPEGBinding(5004)
+		if err != nil {
+			zap.L().Error("failed to create ffmpeg binding", zap.Error(err))
+		} else {
+			tl.AddListener(ffmpeg.PayloadType, ffmpeg.RTPWriter)
+		}
+	}
 
 	for _, sub := range c.subscribers[tl.StreamID()] {
 		ts := &TrackSubscription{

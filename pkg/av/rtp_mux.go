@@ -115,6 +115,8 @@ func (c *RTPMuxContext) WriteAVPacket(p *AVPacket) error {
 		return nil
 	}
 	p.packet.stream_index = 0
+	stream := (*[1 << 30]*C.AVStream)(unsafe.Pointer(avformatctx.streams))[0]
+	C.av_packet_rescale_ts(p.packet, p.timebase, stream.time_base)
 	if averr := C.av_write_frame(avformatctx, p.packet); averr < 0 {
 		return av_err("av_write_frame", averr)
 	}
@@ -131,7 +133,7 @@ func (c *RTPMuxContext) Close() error {
 	// 		return av_err("av_write_trailer", averr)
 	// 	}
 	// }
-	
+
 	// close the sink
 	if sink := c.Sink; sink != nil {
 		if err := sink.Close(); err != nil {

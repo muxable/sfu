@@ -26,10 +26,13 @@ func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error)
 	if decoderctx == nil {
 		return nil, errors.New("failed to create decoder context")
 	}
-	decoderctx.time_base = stream.stream.time_base
 
 	if averr := C.avcodec_parameters_to_context(decoderctx, stream.stream.codecpar); averr < 0 {
 		return nil, av_err("avcodec_parameters_to_context", averr)
+	}
+
+	if stream.stream.codec.codec_type == C.AVMEDIA_TYPE_VIDEO {
+		decoderctx.framerate = C.av_guess_frame_rate(demuxer.avformatctx, stream.stream, nil)
 	}
 
 	decoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY
@@ -47,6 +50,9 @@ func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error)
 }
 
 func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
+	C.av_packet_rescale_ts(p.packet, p.timebase, c.decoderctx.time_base)
+	p.timebase = c.decoderctx.time_base
+
 	if averr := C.avcodec_send_packet(c.decoderctx, p.packet); averr < 0 {
 		return av_err("avcodec_send_packet", averr)
 	}
@@ -59,9 +65,7 @@ func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
 			return av_err("failed to receive frame", res)
 		}
 
-		if c.frame.frame.pts == C.AV_NOPTS_VALUE {
-			continue
-		}
+		c.frame.frame.pts = c.frame.frame.best_effort_timestamp
 
 		if sink := c.Sink; sink != nil {
 			if err := sink.WriteAVFrame(c.frame); err != nil {

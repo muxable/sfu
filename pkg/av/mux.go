@@ -91,6 +91,8 @@ func (c *RawMuxContext) WriteAVPacket(p *AVPacket) error {
 		}
 		c.headerWritten = true
 	}
+	stream := (*[1 << 30]*C.AVStream)(unsafe.Pointer(c.avformatctx.streams))[p.packet.stream_index]
+	C.av_packet_rescale_ts(p.packet, p.timebase, stream.time_base)
 	if averr := C.av_interleaved_write_frame(c.avformatctx, p.packet); averr < 0 {
 		return av_err("av_interleaved_write_frame", averr)
 	}

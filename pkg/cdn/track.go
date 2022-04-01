@@ -37,12 +37,17 @@ func (t *CDNTrackLocalStaticRTP) RemoveListener(id string) {
 
 func (t *CDNTrackLocalStaticRTP) WriteRTP(p *rtp.Packet) error {
 	for _, binding := range t.bindings {
-		p.PayloadType = uint8(binding.PayloadType)
+		if binding.PayloadType != 0 {
+			p.PayloadType = uint8(binding.PayloadType)
+		}
 		if err := binding.WriteRTP(p); err != nil {
-			return err
+			// zap.L().Error("failed to write RTP packet", zap.Error(err))
 		}
 	}
-	return t.TrackLocalStaticRTP.WriteRTP(p)
+	if err := t.TrackLocalStaticRTP.WriteRTP(p); err != nil {
+		// zap.L().Error("failed to write RTP packet", zap.Error(err))
+	}
+	return nil
 }
 
 func (t *CDNTrackLocalStaticRTP) Write(b []byte) (n int, err error) {

@@ -37,7 +37,7 @@ func parseStreamID(sid string) (map[string]string, error) {
 	return items, nil
 }
 
-func RunSRTServer(addr string, trackHandler TrackHandler, node *cdn.LocalCDN) error {
+func RunSRTServer(addr string, trackHandler TrackHandler, node *cdn.LocalCDN, videoCodec, audioCodec webrtc.RTPCodecCapability) error {
 	zap.L().Info("listening for SRT", zap.String("addr", addr))
 
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
@@ -60,7 +60,7 @@ func RunSRTServer(addr string, trackHandler TrackHandler, node *cdn.LocalCDN) er
 			return err
 		}
 		go func() {
-			if err := handleConn(conn, trackHandler, node); err != nil {
+			if err := handleConn(conn, trackHandler, node, videoCodec, audioCodec); err != nil {
 				zap.L().Error("failed to handle connection", zap.Error(err))
 			}
 			conn.Close()
@@ -68,7 +68,7 @@ func RunSRTServer(addr string, trackHandler TrackHandler, node *cdn.LocalCDN) er
 	}
 }
 
-func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.LocalCDN) error {
+func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.LocalCDN, videoCodec, audioCodec webrtc.RTPCodecCapability) error {
 	sid, err := conn.GetSockOptString(srtgo.SRTO_STREAMID)
 	if err != nil {
 		return err
@@ -82,16 +82,6 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 		return fmt.Errorf("missing stream id %s", sid)
 	}
 	if items["m"] == "publish" {
-		videoCodec := webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeVP8,
-			ClockRate: 90000,
-		}
-		audioCodec := webrtc.RTPCodecCapability{
-			MimeType:  webrtc.MimeTypeOpus,
-			ClockRate: 48000,
-			Channels:  2,
-		}
-
 		// construct the elements
 		demux, err := av.NewRawDemuxer(conn)
 		if err != nil {

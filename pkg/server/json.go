@@ -34,18 +34,28 @@ func RunJSONServer(addr string, node *cdn.LocalCDN) error {
 		return err
 	}
 
-	if err := m.RegisterCodec(
-		webrtc.RTPCodecParameters{
-			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", nil},
-			PayloadType:        96,
-		}, webrtc.RTPCodecTypeVideo); err != nil {
-		return err
-	}
+	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+
+	// if err := m.RegisterCodec(
+	// 	webrtc.RTPCodecParameters{
+	// 		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", nil},
+	// 		PayloadType:        96,
+	// 	}, webrtc.RTPCodecTypeVideo); err != nil {
+	// 	return err
+	// }
+
+	// if err := m.RegisterCodec(
+	// 	webrtc.RTPCodecParameters{
+	// 		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP9, 90000, 0, "", nil},
+	// 		PayloadType:        100,
+	// 	}, webrtc.RTPCodecTypeVideo); err != nil {
+	// 	return err
+	// }
 
 	if err := m.RegisterCodec(
 		webrtc.RTPCodecParameters{
-			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP9, 90000, 0, "", nil},
-			PayloadType:        100,
+			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeH264, 90000, 0, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f", videoRTCPFeedback},
+			PayloadType:        102,
 		}, webrtc.RTPCodecTypeVideo); err != nil {
 		return err
 	}

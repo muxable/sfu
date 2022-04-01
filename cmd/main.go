@@ -8,6 +8,7 @@ import (
 
 	"github.com/muxable/sfu/pkg/cdn"
 	"github.com/muxable/sfu/pkg/server"
+	"github.com/pion/webrtc/v3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -52,10 +53,20 @@ func main() {
 
 	th := server.NewCDNHandler(node)
 
-	go server.RunRTPServer(*rtpAddr, th)
-	go server.RunRTMPServer(*rtmpAddr, th)
-	go server.RunSRTServer(*srtAddr, th, node)
+	videoCodec := webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeH264,
+		ClockRate: 90000,
+	}
+	audioCodec := webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeOpus,
+		ClockRate: 48000,
+		Channels:  2,
+	}
+
+	go server.RunRTPServer(*rtpAddr, th, videoCodec, audioCodec)
+	go server.RunRTMPServer(*rtmpAddr, th, videoCodec, audioCodec)
+	go server.RunSRTServer(*srtAddr, th, node, videoCodec, audioCodec)
 	go server.RunJSONServer(*jsonAddr, node)
 
-	select{}
+	select {}
 }

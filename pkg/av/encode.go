@@ -39,12 +39,14 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 		encoderctx.channel_layout = C.uint64_t(C.av_get_default_channel_layout(C.int(codec.Channels)))
 		encoderctx.sample_rate = C.int(codec.ClockRate)
 		encoderctx.sample_fmt = C.AV_SAMPLE_FMT_S16
+		encoderctx.time_base = C.AVRational{1, C.int(codec.ClockRate)}
 	}
 	if strings.HasPrefix(codec.MimeType, "video/") {
-		encoderctx.width = decoder.decoderctx.width
 		encoderctx.height = decoder.decoderctx.height
+		encoderctx.width = decoder.decoderctx.width
+		encoderctx.sample_aspect_ratio = decoder.decoderctx.sample_aspect_ratio
 		encoderctx.pix_fmt = C.AV_PIX_FMT_YUV420P
-		encoderctx.time_base = decoder.decoderctx.time_base
+		encoderctx.time_base = C.av_inv_q(decoder.decoderctx.framerate)
 	}
 
 	var opts *C.AVDictionary
@@ -55,13 +57,15 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 		if averr := C.av_dict_set(&opts, C.CString("preset"), C.CString("ultrafast"), 0); averr < 0 {
 			return nil, av_err("av_dict_set", averr)
 		}
-		if averr := C.av_dict_set(&opts, C.CString("tune"), C.CString("zerolatency"), 0); averr < 0 {
+		// TODO: unclear why this doesn't work, it causes only keyframes to be rendered.
+
+		// if averr := C.av_dict_set(&opts, C.CString("tune"), C.CString("zerolatency"), 0); averr < 0 {
+		// 	return nil, av_err("av_dict_set", averr)
+		// }
+		if averr := C.av_dict_set(&opts, C.CString("level"), C.CString("4.0"), 0); averr < 0 {
 			return nil, av_err("av_dict_set", averr)
 		}
-		if averr := C.av_dict_set(&opts, C.CString("profile"), C.CString("high"), 0); averr < 0 {
-			return nil, av_err("av_dict_set", averr)
-		}
-		if averr := C.av_dict_set(&opts, C.CString("level"), C.CString("5.0"), 0); averr < 0 {
+		if averr := C.av_dict_set(&opts, C.CString("profile"), C.CString("baseline"), 0); averr < 0 {
 			return nil, av_err("av_dict_set", averr)
 		}
 
@@ -105,7 +109,7 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 		if averr := C.av_dict_set_int(&opts, C.CString("crf"), 20, 0); averr < 0 {
 			return nil, av_err("av_dict_set_int", averr)
 		}
-		
+
 		encoderctx.max_b_frames = 0
 		encoderctx.bit_rate = 20 * 1000 * 1000
 		encoderctx.gop_size = 10
@@ -154,6 +158,7 @@ func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
 
 		if sink := c.Sink; sink != nil {
 			c.packet.packet.stream_index = C.int(sink.Index)
+			c.packet.timebase = c.encoderctx.time_base
 			if err := sink.WriteAVPacket(c.packet); err != nil {
 				return err
 			}
