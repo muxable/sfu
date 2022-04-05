@@ -47,6 +47,7 @@ func main() {
 	rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")
 	srtAddr := flag.String("srt", "0.0.0.0:1935", "The address to receive from")
 	jsonAddr := flag.String("json", "0.0.0.0:7000", "The address to receive from")
+	webrtcAddr := flag.String("webrtc", "0.0.0.0:50051", "The address to receive from")
 	flag.Parse()
 
 	node := cdn.NewLocalCDN()
@@ -67,6 +68,7 @@ func main() {
 	go server.RunRTMPServer(*rtmpAddr, th, videoCodec, audioCodec)
 	go server.RunSRTServer(*srtAddr, th, node, videoCodec, audioCodec)
 	go server.RunJSONServer(*jsonAddr, node)
+	go server.RunWebRTCServer(*webrtcAddr, th, videoCodec, audioCodec)
 
 	select {}
 }

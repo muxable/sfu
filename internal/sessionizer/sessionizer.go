@@ -10,12 +10,10 @@ import (
 
 	"github.com/muxable/rtptools/pkg/rfc8698/ecn"
 	"github.com/muxable/rtptools/pkg/rfc8888"
-	"github.com/muxable/rtptools/pkg/x_ssrc"
 	"github.com/muxable/rtptools/pkg/x_time"
 	"github.com/muxable/sfu/pkg/clock"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
-	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/ipv4"
@@ -27,17 +25,25 @@ type ccfb struct {
 	sender *net.UDPAddr
 }
 
+type Session struct {
+	io.Reader
+	webrtc.SSRC
+
+	w io.WriteCloser
+
+	lastSender *net.UDPAddr
+	lastRecvTs time.Time
+}
+
 type Sessionizer struct {
 	sync.RWMutex
-	rtpio.RTCPWriter
 
-	conn    *net.UDPConn
-	sources map[webrtc.SSRC]*net.UDPAddr
+	conn     *net.UDPConn
+	sessions map[webrtc.SSRC]*Session
 
-	ccfb map[string]*ccfb
+	ccfb map[string]*ccfb // keyed by sender.
 
-	rtcpWriter rtpio.RTCPWriter
-	sessionCh  chan *Session
+	sessionsCh chan *Session
 }
 
 var udpOOBSize = func() int {
@@ -53,15 +59,11 @@ var udpOOBSize = func() int {
 func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 	ecn.EnableExplicitCongestionNotification(conn)
 
-	rtpReader, rtpWriter := rtpio.RTPPipe()
-	rtcpReader, rtcpWriter := rtpio.RTCPPipe()
-
 	m := &Sessionizer{
 		conn:       conn,
-		sources:    make(map[webrtc.SSRC]*net.UDPAddr),
+		sessions:   make(map[webrtc.SSRC]*Session),
 		ccfb:       make(map[string]*ccfb),
-		rtcpWriter: rtcpWriter,
-		sessionCh:  make(chan *Session),
+		sessionsCh: make(chan *Session),
 	}
 
 	ccTicker := time.NewTicker(100 * time.Millisecond)
@@ -107,96 +109,103 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 	go func() {
 		buf := make([]byte, mtu)
 		oob := make([]byte, udpOOBSize)
-		defer func() { done <- true }()
 		for {
 			n, oobn, _, sender, err := m.conn.ReadMsgUDP(buf, oob)
 			if err != nil {
+				log.Error().Err(err).Msg("failed to read udp packet")
 				return
 			}
-			ts := time.Now()
-			h := &rtcp.Header{}
-			if err := h.Unmarshal(buf[:n]); err != nil {
-				// not a valid rtp/rtcp packet.
+
+			ssrcs, err := m.parseSSRCs(buf[:n], oob[:oobn], sender)
+			if err != nil {
+				log.Error().Err(err).Msg("failed to parse ssrcs")
 				continue
 			}
-			if h.Type >= 200 && h.Type <= 207 {
-				if err := m.handleRTCP(sender, buf[:n], ts); err != nil {
-					log.Error().Err(err).Msg("failed to handle rtcp packet")
-				}
-			} else {
-				p := &rtp.Packet{}
-				if err := p.Unmarshal(buf[:n]); err != nil {
-					// not a valid rtp/rtcp packet.
-					continue
-				}
-				if err := rtpWriter.WriteRTP(p); err != nil {
-					continue
-				}
-				ssrc := webrtc.SSRC(p.SSRC)
-				m.Lock()
-				m.sources[ssrc] = sender
 
-				// log this with congestion control.
-				ecn, err := ecn.CheckExplicitCongestionNotification(oob[:oobn])
-				if err != nil {
-					log.Error().Err(err).Msg("failed to check ecn")
-					m.Unlock()
-					continue
-				}
-
-				// get the twcc header sequence number.
-				tccExt := &rtp.TransportCCExtension{}
-				if ext := p.Header.GetExtension(5); ext != nil {
-					if err := tccExt.Unmarshal(ext); err != nil {
-						log.Error().Err(err).Msg("failed to unmarshal twcc extension")
-						m.Unlock()
-						continue
+			m.Lock()
+			for _, ssrc := range ssrcs {
+				if _, ok := m.sessions[ssrc]; !ok {
+					r, w := io.Pipe()
+					m.sessions[ssrc] = &Session{
+						Reader:     r,
+						w:          w,
+						lastSender: sender,
+						lastRecvTs: time.Now(),
+						SSRC: ssrc,
 					}
+					m.sessionsCh <- m.sessions[ssrc]
 				}
-
-				fb := m.ccfb[sender.String()]
-				if fb == nil {
-					fb = &ccfb{
-						sender: sender,
-						stream: rfc8888.NewPacketStream(),
-					}
-					m.ccfb[sender.String()] = fb
+				if _, err := m.sessions[ssrc].w.Write(buf[:n]); err != nil {
+					log.Error().Err(err).Msg("failed to write to session")
 				}
-				if err := fb.stream.AddPacket(time.Now(), ssrc, tccExt.TransportSequence, ecn); err != nil {
-					log.Error().Err(err).Msg("failed to add packet to congestion control")
-				}
-				m.Unlock()
 			}
+			m.Unlock()
 		}
 	}()
-	go x_ssrc.NewDemultiplexer(time.Now, rtpReader, rtcpReader, func(ssrc webrtc.SSRC, rtpIn rtpio.RTPReader, rtcpIn rtpio.RTCPReader) {
-		m.sessionCh <- &Session{
-			SSRC:       ssrc,
-			RTPReader:  rtpIn,
-			RTCPReader: rtcpIn,
-			RTCPWriter: m,
-		}
-	})
 	return m, nil
 }
 
 func (m *Sessionizer) Accept() (*Session, error) {
-	session, ok := <-m.sessionCh
+	s, ok := <-m.sessionsCh
 	if !ok {
 		return nil, io.EOF
 	}
-	return session, nil
+	return s, nil
 }
 
-func (m *Sessionizer) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) error {
+func (m *Sessionizer) parseSSRCs(buf []byte, oob []byte, sender *net.UDPAddr) ([]webrtc.SSRC, error) {
+	h := &rtcp.Header{}
+	if err := h.Unmarshal(buf); err != nil {
+		return nil, err
+	}
+	ts := time.Now()
+	if h.Type >= 200 && h.Type <= 207 {
+		return m.parseRTCPSSRCs(sender, buf, ts)
+	} else {
+		p := &rtp.Packet{}
+		if err := p.Unmarshal(buf); err != nil {
+			return nil, err
+		}
+
+		// log this with congestion control.
+		ecn, err := ecn.CheckExplicitCongestionNotification(oob)
+		if err != nil {
+			return nil, err
+		}
+
+		// get the twcc header sequence number.
+		tccExt := &rtp.TransportCCExtension{}
+		if ext := p.Header.GetExtension(5); ext != nil {
+			if err := tccExt.Unmarshal(ext); err != nil {
+				return nil, err
+			}
+		}
+
+		m.Lock()
+		defer m.Unlock()
+		fb := m.ccfb[sender.String()]
+		if fb == nil {
+			fb = &ccfb{
+				sender: sender,
+				stream: rfc8888.NewPacketStream(),
+			}
+			m.ccfb[sender.String()] = fb
+		}
+		ssrc := webrtc.SSRC(p.SSRC)
+		return []webrtc.SSRC{ssrc}, fb.stream.AddPacket(time.Now(), ssrc, tccExt.TransportSequence, ecn)
+	}
+}
+
+func (m *Sessionizer) parseRTCPSSRCs(sender *net.UDPAddr, buf []byte, ts time.Time) ([]webrtc.SSRC, error) {
 	// it's an rtcp packet.
 	cp, err := rtcp.Unmarshal(buf)
 	if err != nil {
 		// not a valid rtcp packet.
-		return err
+		return nil, err
 	}
 	// if it's a sender clock report, immediately respond with a receiver clock report.
 	// additionally, by contract sender clocks are sent in separate packets so we don't forward.
+	var ssrcs []webrtc.SSRC
 	for _, p := range cp {
 		switch p := p.(type) {
 		case *rtcp.RawPacket:
@@ -204,7 +213,7 @@ func (m *Sessionizer) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) 
 				p.Header().Count == 29 {
 				senderClockReport := &clock.SenderClock{}
 				if err := senderClockReport.Unmarshal([]byte(*p)[4:]); err != nil {
-					return err
+					return nil, err
 				}
 				receiverClockReport := &clock.ReceiverClock{
 					LastSenderNTPTime: senderClockReport.SenderNTPTime,
@@ -212,7 +221,7 @@ func (m *Sessionizer) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) 
 				}
 				payload, err := receiverClockReport.Marshal()
 				if err != nil {
-					return err
+					return nil, err
 				}
 				buf := make([]byte, len(payload)+4)
 				header := rtcp.Header{
@@ -223,21 +232,21 @@ func (m *Sessionizer) handleRTCP(sender *net.UDPAddr, buf []byte, ts time.Time) 
 				}
 				hData, err := header.Marshal()
 				if err != nil {
-					return err
+					return nil, err
 				}
 				copy(buf, hData)
 				copy(buf[len(hData):], payload)
 				if _, err := m.conn.WriteToUDP(buf, sender); err != nil {
 					log.Error().Err(err).Msg("failed to send congestion control packet")
 				}
-				return nil
+				return nil, nil
 			}
 		}
+		for _, ssrc := range p.DestinationSSRC() {
+			ssrcs = append(ssrcs, webrtc.SSRC(ssrc))
+		}
 	}
-	if err := m.rtcpWriter.WriteRTCP(cp); err != nil {
-		return err
-	}
-	return nil
+	return ssrcs, nil
 }
 
 // Write writes to the connection sending to only senders that have sent to that ssrc.
@@ -251,19 +260,12 @@ func (m *Sessionizer) WriteRTCP(pkts []rtcp.Packet) error {
 	for _, p := range pkts {
 		for _, ssrc := range p.DestinationSSRC() {
 			// forward this packet to that ssrc's source.
-			if addr, ok := m.sources[webrtc.SSRC(ssrc)]; ok {
-				if _, err := m.conn.WriteToUDP(buf, addr); err != nil {
+			if session, ok := m.sessions[webrtc.SSRC(ssrc)]; ok {
+				if _, err := m.conn.WriteToUDP(buf, session.lastSender); err != nil {
 					log.Error().Err(err).Msg("failed to send rtcp packet")
 				}
 			}
 		}
 	}
 	return nil
-}
-
-type Session struct {
-	webrtc.SSRC
-	rtpio.RTPReader
-	rtpio.RTCPReader
-	rtpio.RTCPWriter
 }

@@ -75,8 +75,32 @@ func (a *Analyzer) WriteRTCP(p []rtcp.Packet) error {
 			}
 		}
 	}
+	if len(a.rtcpCh) == cap(a.rtcpCh) {
+		// this is almost certainly an error, we don't want to block here.
+		return io.ErrShortWrite
+	}
 	a.rtcpCh <- p
 	return nil
+}
+
+func (a *Analyzer) Write(buf []byte) (int, error) {
+	h := &rtcp.Header{}
+	if err := h.Unmarshal(buf); err != nil {
+		return 0, err
+	}
+	if h.Type >= 200 && h.Type <= 207 {
+		p, err := rtcp.Unmarshal(buf)
+		if err != nil {
+			return 0, err
+		}
+		return len(buf), a.WriteRTCP(p)
+	} else {
+		p := &rtp.Packet{}
+		if err := p.Unmarshal(buf); err != nil {
+			return 0, err
+		}
+		return len(buf), a.WriteRTP(p)
+	}
 }
 
 func (a *Analyzer) ReadRTP() (*rtp.Packet, error) {

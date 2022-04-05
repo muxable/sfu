@@ -7,16 +7,13 @@ option go_package = "github.com/muxable/sfu/api";
 package api;
 
 service SFU {
-  rpc Signal(stream Request) returns (stream Response) {}
+  // This is left as two separate RPCs for now because Pion does not implement perfect negotiation.
+  // https://github.com/pion/webrtc/issues/2133
+  rpc Publish(stream google.protobuf.Any) returns (stream google.protobuf.Any) {}
+  rpc Subscribe(stream SubscribeRequest) returns (stream google.protobuf.Any) {}
 }
 
-message Request {
-  oneof operation {
-    string key = 1;
-    google.protobuf.Any signal = 2;
-  }
-}
-
-message Response {
-    google.protobuf.Any signal = 1;
+message SubscribeRequest {
+  string stream_id = 1;
+  google.protobuf.Any signal = 2;
 }

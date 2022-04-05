@@ -2,17 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 
 	"github.com/muxable/sfu/api"
 	"github.com/muxable/signal/pkg/signal"
-	"github.com/pion/mediadevices"
-	"github.com/pion/mediadevices/pkg/codec/opus"
-	"github.com/pion/mediadevices/pkg/codec/x264"
-	_ "github.com/pion/mediadevices/pkg/driver/audiotest"
-	_ "github.com/pion/mediadevices/pkg/driver/videotest"
-	"github.com/pion/mediadevices/pkg/frame"
-	"github.com/pion/mediadevices/pkg/prop"
+	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -20,29 +17,14 @@ import (
 )
 
 func main() {
-	x264Params, err := x264.NewParams()
-	if err != nil {
-		panic(err)
-	}
-	x264Params.BitRate = 500_000 // 500kbps
-
-	opusParams, err := opus.NewParams()
-	if err != nil {
-		panic(err)
-	}
-	codecSelector := mediadevices.NewCodecSelector(
-		mediadevices.WithVideoEncoders(&x264Params),
-		mediadevices.WithAudioEncoders(&opusParams),
-	)
-
-	mediaEngine := webrtc.MediaEngine{}
-	codecSelector.Populate(&mediaEngine)
-	peerConnection, err := webrtc.NewAPI(webrtc.WithMediaEngine(&mediaEngine)).NewPeerConnection(webrtc.Configuration{
+	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
 	})
 	if err != nil {
 		panic(err)
 	}
+
+	signaller := signal.NewSignaller(peerConnection)
 
 	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -50,68 +32,85 @@ func main() {
 	}
 	defer conn.Close()
 
-	client, err := api.NewSFUClient(conn).Signal(context.Background())
+	client, err := api.NewSFUClient(conn).Publish(context.Background())
 	if err != nil {
 		panic(err)
 	}
 
-	signaller := signal.NewSignaller(peerConnection)
+	// Open a UDP Listener for RTP Packets on port 5004
+	lis, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5004})
+	if err != nil {
+		panic(err)
+	}
+	defer lis.Close()
 
-	// peerConnection.OnNegotiationNeeded(signaller.Renegotiate)
-
-	s, err := mediadevices.GetUserMedia(mediadevices.MediaStreamConstraints{
-		Video: func(c *mediadevices.MediaTrackConstraints) {
-			c.FrameFormat = prop.FrameFormat(frame.FormatI420)
-			c.Width = prop.Int(640)
-			c.Height = prop.Int(480)
-		},
-		Audio: func(c *mediadevices.MediaTrackConstraints) {
-		},
-		Codec: codecSelector,
-	})
+	// Create a video track
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "pion")
+	if err != nil {
+		panic(err)
+	}
+	rtpSender, err := peerConnection.AddTrack(videoTrack)
 	if err != nil {
 		panic(err)
 	}
 
-	for _, track := range s.GetTracks() {
-		track.OnEnded(func(err error) {
-			fmt.Printf("Track (ID: %s) ended with error: %v\n",
-				track.ID(), err)
-		})
-
-		_, err = peerConnection.AddTransceiverFromTrack(track,
-			webrtc.RtpTransceiverInit{
-				Direction: webrtc.RTPTransceiverDirectionSendonly,
-			},
-		)
-		if err != nil {
-			panic(err)
+	go func() {
+		rtcpBuf := make([]byte, 1500)
+		for {
+			if _, _, rtcpErr := rtpSender.Read(rtcpBuf); rtcpErr != nil {
+				return
+			}
 		}
-	}
+	}()
 
 	go signaller.Renegotiate()
 
 	go func() {
 		for {
-			signal, err := signaller.ReadSignal()
+			pb, err := signaller.ReadSignal()
 			if err != nil {
 				zap.L().Error("failed to read signal", zap.Error(err))
 				return
 			}
-			if err := client.Send(&api.Request{Operation: &api.Request_Signal{Signal: signal}}); err != nil {
+			if err := client.Send(pb); err != nil {
 				zap.L().Error("failed to send signal", zap.Error(err))
 				return
 			}
 		}
 	}()
 
-	for {
-		in, err := client.Recv()
-		if err != nil {
-			panic(err)
+	go func() {
+		for {
+			pb, err := client.Recv()
+			if err != nil {
+				panic(err)
+			}
+			if err := signaller.WriteSignal(pb); err != nil {
+				panic(err)
+			}
 		}
+	}()
 
-		if err := signaller.WriteSignal(in.Signal); err != nil {
+	// Read RTP packets forever and send them to the WebRTC Client
+	buf := make([]byte, 1600) // UDP MTU
+	for {
+		n, _, err := lis.ReadFromUDP(buf)
+		if err != nil {
+			panic(fmt.Sprintf("error during read: %s", err))
+		}
+		p := &rtp.Packet{}
+		if err := p.Unmarshal(buf[:n]); err != nil {
+			panic(fmt.Sprintf("error during unmarshal: %s", err))
+		}
+		if p.PayloadType != 112 {
+			continue
+		}
+		if _, err = videoTrack.Write(buf[:n]); err != nil {
+			if errors.Is(err, io.ErrClosedPipe) {
+				// The peerConnection has been closed.
+				return
+			}
+
 			panic(err)
 		}
 	}

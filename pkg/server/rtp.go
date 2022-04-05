@@ -4,7 +4,6 @@ import (
 	"io"
 	"math/rand"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,21 +53,9 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 		}
 
 		go func() {
-			var wg sync.WaitGroup
-			wg.Add(2)
-			go func() {
-				rtpio.CopyRTP(analyze, source)
-				wg.Done()
-			}()
-			go func() {
-				rtpio.CopyRTCP(analyze, source)
-				wg.Done()
-			}()
-			wg.Wait()
-			analyze.Close()
-		}()
+			go io.Copy(analyze, source)
+			go rtpio.DiscardRTCP.ReadRTCPFrom(analyze)
 
-		go func() {
 			params := analyze.ReadResults()
 
 			codec, ok := codecs.FindByPayloadType(params.PayloadType)
@@ -76,7 +63,6 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 				return
 			}
 
-			go rtpio.DiscardRTCP.ReadRTCPFrom(analyze)
 			jb := buffer.NewReorderBuffer(codec.ClockRate, 750*time.Millisecond)
 			go rtpio.CopyRTP(jb, analyze)
 			// write nacks periodically back to the sender
@@ -108,7 +94,7 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 							MediaSSRC:  uint32(source.SSRC),
 							Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
 						}
-						if err := source.WriteRTCP([]rtcp.Packet{nack}); err != nil {
+						if err := srv.WriteRTCP([]rtcp.Packet{nack}); err != nil {
 							log.Error().Err(err).Msg("failed to write NACK")
 						}
 					case <-done:

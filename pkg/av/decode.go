@@ -65,6 +65,10 @@ func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
 			return av_err("failed to receive frame", res)
 		}
 
+		if c.frame.frame.pts == C.AV_NOPTS_VALUE {
+			continue
+		}
+
 		c.frame.frame.pts = c.frame.frame.best_effort_timestamp
 
 		if sink := c.Sink; sink != nil {

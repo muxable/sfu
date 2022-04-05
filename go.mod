@@ -2,6 +2,8 @@ module github.com/muxable/sfu
 
 go 1.17
 
+replace github.com/pion/webrtc/v3 => ../webrtc
+
 require (
 	github.com/google/uuid v1.3.0
 	github.com/haivision/srtgo v0.0.0-20211019211331-3f0cef2e19ee
@@ -9,9 +11,8 @@ require (
 	github.com/muxable/rtptools v0.1.6
 	github.com/muxable/signal v0.0.0-20220312145144-4c0e0ca92a2c
 	github.com/pion/ion-sdk-go v0.7.1-0.20220120062900-5373ebf54caf
-	github.com/pion/mediadevices v0.3.3-0.20220308090901-9bb5755cd24b
 	github.com/pion/rtcp v1.2.9
-	github.com/pion/rtp v1.7.4
+	github.com/pion/rtp v1.7.9
 	github.com/pion/rtpio v0.1.4
 	github.com/pion/sdp v1.3.0
 	github.com/pion/webrtc/v3 v3.1.23
@@ -20,9 +21,8 @@ require (
 	github.com/rs/zerolog v1.26.1
 	github.com/yutopp/go-flv v0.2.0
 	github.com/yutopp/go-rtmp v0.0.1
-	go.uber.org/goleak v1.1.12
 	go.uber.org/zap v1.20.0
-	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
+	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd
 	google.golang.org/grpc v1.44.0
 	google.golang.org/protobuf v1.27.1
 )
@@ -46,9 +46,9 @@ require (
 	github.com/mitchellh/mapstructure v1.4.2 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/pion/datachannel v1.5.2 // indirect
-	github.com/pion/dtls/v2 v2.1.2 // indirect
-	github.com/pion/ice/v2 v2.1.20 // indirect
-	github.com/pion/interceptor v0.1.7
+	github.com/pion/dtls/v2 v2.1.3 // indirect
+	github.com/pion/ice/v2 v2.2.2 // indirect
+	github.com/pion/interceptor v0.1.10
 	github.com/pion/ion v1.10.0 // indirect
 	github.com/pion/ion-log v1.2.1 // indirect
 	github.com/pion/logging v0.2.2 // indirect
@@ -59,7 +59,7 @@ require (
 	github.com/pion/srtp/v2 v2.0.5 // indirect
 	github.com/pion/stun v0.3.5 // indirect
 	github.com/pion/transport v0.13.0 // indirect
-	github.com/pion/turn/v2 v2.0.6 // indirect
+	github.com/pion/turn/v2 v2.0.8 // indirect
 	github.com/pion/udp v0.1.1 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.26.0 // indirect
@@ -69,8 +69,6 @@ require (
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
 	golang.org/x/crypto v0.0.0-20220131195533-30dcbda58838 // indirect
-	golang.org/x/image v0.0.0-20210628002857-a66eb6448b8d // indirect
-	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20220128215802-99c3d69c2c27 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
 	golang.org/x/text v0.3.7 // indirect

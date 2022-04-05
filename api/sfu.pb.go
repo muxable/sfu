@@ -25,19 +25,17 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type Request struct {
+type SubscribeRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	// Types that are assignable to Operation:
-	//	*Request_Key
-	//	*Request_Signal
-	Operation isRequest_Operation `protobuf_oneof:"operation"`
+	StreamId string     `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	Signal   *anypb.Any `protobuf:"bytes,2,opt,name=signal,proto3" json:"signal,omitempty"`
 }
 
-func (x *Request) Reset() {
-	*x = Request{}
+func (x *SubscribeRequest) Reset() {
+	*x = SubscribeRequest{}
 	if protoimpl.UnsafeEnabled {
 		mi := &file_sfu_proto_msgTypes[0]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -45,13 +43,13 @@ func (x *Request) Reset() {
 	}
 }
 
-func (x *Request) String() string {
+func (x *SubscribeRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*Request) ProtoMessage() {}
+func (*SubscribeRequest) ProtoMessage() {}
 
-func (x *Request) ProtoReflect() protoreflect.Message {
+func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_sfu_proto_msgTypes[0]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -63,89 +61,19 @@ func (x *Request) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use Request.ProtoReflect.Descriptor instead.
-func (*Request) Descriptor() ([]byte, []int) {
+// Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
+func (*SubscribeRequest) Descriptor() ([]byte, []int) {
 	return file_sfu_proto_rawDescGZIP(), []int{0}
 }
 
-func (m *Request) GetOperation() isRequest_Operation {
-	if m != nil {
-		return m.Operation
-	}
-	return nil
-}
-
-func (x *Request) GetKey() string {
-	if x, ok := x.GetOperation().(*Request_Key); ok {
-		return x.Key
+func (x *SubscribeRequest) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
 	}
 	return ""
 }
 
-func (x *Request) GetSignal() *anypb.Any {
-	if x, ok := x.GetOperation().(*Request_Signal); ok {
-		return x.Signal
-	}
-	return nil
-}
-
-type isRequest_Operation interface {
-	isRequest_Operation()
-}
-
-type Request_Key struct {
-	Key string `protobuf:"bytes,1,opt,name=key,proto3,oneof"`
-}
-
-type Request_Signal struct {
-	Signal *anypb.Any `protobuf:"bytes,2,opt,name=signal,proto3,oneof"`
-}
-
-func (*Request_Key) isRequest_Operation() {}
-
-func (*Request_Signal) isRequest_Operation() {}
-
-type Response struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Signal *anypb.Any `protobuf:"bytes,1,opt,name=signal,proto3" json:"signal,omitempty"`
-}
-
-func (x *Response) Reset() {
-	*x = Response{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_sfu_proto_msgTypes[1]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *Response) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Response) ProtoMessage() {}
-
-func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_sfu_proto_msgTypes[1]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Response.ProtoReflect.Descriptor instead.
-func (*Response) Descriptor() ([]byte, []int) {
-	return file_sfu_proto_rawDescGZIP(), []int{1}
-}
-
-func (x *Response) GetSignal() *anypb.Any {
+func (x *SubscribeRequest) GetSignal() *anypb.Any {
 	if x != nil {
 		return x.Signal
 	}
@@ -157,22 +85,24 @@ var File_sfu_proto protoreflect.FileDescriptor
 var file_sfu_proto_rawDesc = []byte{
 	0x0a, 0x09, 0x73, 0x66, 0x75, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x12, 0x03, 0x61, 0x70, 0x69,
 	0x1a, 0x19, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2f, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75,
-	0x66, 0x2f, 0x61, 0x6e, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x5a, 0x0a, 0x07, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x12, 0x0a, 0x03, 0x6b, 0x65, 0x79, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x48, 0x00, 0x52, 0x03, 0x6b, 0x65, 0x79, 0x12, 0x2e, 0x0a, 0x06, 0x73, 0x69,
-	0x67, 0x6e, 0x61, 0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x67, 0x6f, 0x6f,
-	0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79,
-	0x48, 0x00, 0x52, 0x06, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x6c, 0x42, 0x0b, 0x0a, 0x09, 0x6f, 0x70,
-	0x65, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x22, 0x38, 0x0a, 0x08, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x12, 0x2c, 0x0a, 0x06, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x6c, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f,
-	0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79, 0x52, 0x06, 0x73, 0x69, 0x67, 0x6e, 0x61,
-	0x6c, 0x32, 0x32, 0x0a, 0x03, 0x53, 0x46, 0x55, 0x12, 0x2b, 0x0a, 0x06, 0x53, 0x69, 0x67, 0x6e,
-	0x61, 0x6c, 0x12, 0x0c, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x0d, 0x2e, 0x61, 0x70, 0x69, 0x2e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22,
-	0x00, 0x28, 0x01, 0x30, 0x01, 0x42, 0x1c, 0x5a, 0x1a, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e,
-	0x63, 0x6f, 0x6d, 0x2f, 0x6d, 0x75, 0x78, 0x61, 0x62, 0x6c, 0x65, 0x2f, 0x73, 0x66, 0x75, 0x2f,
-	0x61, 0x70, 0x69, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x66, 0x2f, 0x61, 0x6e, 0x79, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x5d, 0x0a, 0x10, 0x53,
+	0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12,
+	0x1b, 0x0a, 0x09, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x08, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x49, 0x64, 0x12, 0x2c, 0x0a, 0x06,
+	0x73, 0x69, 0x67, 0x6e, 0x61, 0x6c, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x14, 0x2e, 0x67,
+	0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41,
+	0x6e, 0x79, 0x52, 0x06, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x6c, 0x32, 0x82, 0x01, 0x0a, 0x03, 0x53,
+	0x46, 0x55, 0x12, 0x3b, 0x0a, 0x07, 0x50, 0x75, 0x62, 0x6c, 0x69, 0x73, 0x68, 0x12, 0x14, 0x2e,
+	0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e,
+	0x41, 0x6e, 0x79, 0x1a, 0x14, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79, 0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x12,
+	0x3e, 0x0a, 0x09, 0x53, 0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x12, 0x15, 0x2e, 0x61,
+	0x70, 0x69, 0x2e, 0x53, 0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x1a, 0x14, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72, 0x6f,
+	0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x41, 0x6e, 0x79, 0x22, 0x00, 0x28, 0x01, 0x30, 0x01, 0x42,
+	0x1c, 0x5a, 0x1a, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6d, 0x75,
+	0x78, 0x61, 0x62, 0x6c, 0x65, 0x2f, 0x73, 0x66, 0x75, 0x2f, 0x61, 0x70, 0x69, 0x62, 0x06, 0x70,
+	0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -187,22 +117,22 @@ func file_sfu_proto_rawDescGZIP() []byte {
 	return file_sfu_proto_rawDescData
 }
 
-var file_sfu_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_sfu_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
 var file_sfu_proto_goTypes = []interface{}{
-	(*Request)(nil),   // 0: api.Request
-	(*Response)(nil),  // 1: api.Response
-	(*anypb.Any)(nil), // 2: google.protobuf.Any
+	(*SubscribeRequest)(nil), // 0: api.SubscribeRequest
+	(*anypb.Any)(nil),        // 1: google.protobuf.Any
 }
 var file_sfu_proto_depIdxs = []int32{
-	2, // 0: api.Request.signal:type_name -> google.protobuf.Any
-	2, // 1: api.Response.signal:type_name -> google.protobuf.Any
-	0, // 2: api.SFU.Signal:input_type -> api.Request
-	1, // 3: api.SFU.Signal:output_type -> api.Response
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	1, // 0: api.SubscribeRequest.signal:type_name -> google.protobuf.Any
+	1, // 1: api.SFU.Publish:input_type -> google.protobuf.Any
+	0, // 2: api.SFU.Subscribe:input_type -> api.SubscribeRequest
+	1, // 3: api.SFU.Publish:output_type -> google.protobuf.Any
+	1, // 4: api.SFU.Subscribe:output_type -> google.protobuf.Any
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_sfu_proto_init() }
@@ -212,7 +142,7 @@ func file_sfu_proto_init() {
 	}
 	if !protoimpl.UnsafeEnabled {
 		file_sfu_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Request); i {
+			switch v := v.(*SubscribeRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -223,22 +153,6 @@ func file_sfu_proto_init() {
 				return nil
 			}
 		}
-		file_sfu_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Response); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-	}
-	file_sfu_proto_msgTypes[0].OneofWrappers = []interface{}{
-		(*Request_Key)(nil),
-		(*Request_Signal)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -246,7 +160,7 @@ func file_sfu_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_sfu_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   1,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
@@ -272,7 +186,8 @@ const _ = grpc.SupportPackageIsVersion6
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
 type SFUClient interface {
-	Signal(ctx context.Context, opts ...grpc.CallOption) (SFU_SignalClient, error)
+	Publish(ctx context.Context, opts ...grpc.CallOption) (SFU_PublishClient, error)
+	Subscribe(ctx context.Context, opts ...grpc.CallOption) (SFU_SubscribeClient, error)
 }
 
 type sFUClient struct {
@@ -283,31 +198,62 @@ func NewSFUClient(cc grpc.ClientConnInterface) SFUClient {
 	return &sFUClient{cc}
 }
 
-func (c *sFUClient) Signal(ctx context.Context, opts ...grpc.CallOption) (SFU_SignalClient, error) {
-	stream, err := c.cc.NewStream(ctx, &_SFU_serviceDesc.Streams[0], "/api.SFU/Signal", opts...)
+func (c *sFUClient) Publish(ctx context.Context, opts ...grpc.CallOption) (SFU_PublishClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_SFU_serviceDesc.Streams[0], "/api.SFU/Publish", opts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &sFUSignalClient{stream}
+	x := &sFUPublishClient{stream}
 	return x, nil
 }
 
-type SFU_SignalClient interface {
-	Send(*Request) error
-	Recv() (*Response, error)
+type SFU_PublishClient interface {
+	Send(*anypb.Any) error
+	Recv() (*anypb.Any, error)
 	grpc.ClientStream
 }
 
-type sFUSignalClient struct {
+type sFUPublishClient struct {
 	grpc.ClientStream
 }
 
-func (x *sFUSignalClient) Send(m *Request) error {
+func (x *sFUPublishClient) Send(m *anypb.Any) error {
 	return x.ClientStream.SendMsg(m)
 }
 
-func (x *sFUSignalClient) Recv() (*Response, error) {
-	m := new(Response)
+func (x *sFUPublishClient) Recv() (*anypb.Any, error) {
+	m := new(anypb.Any)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *sFUClient) Subscribe(ctx context.Context, opts ...grpc.CallOption) (SFU_SubscribeClient, error) {
+	stream, err := c.cc.NewStream(ctx, &_SFU_serviceDesc.Streams[1], "/api.SFU/Subscribe", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &sFUSubscribeClient{stream}
+	return x, nil
+}
+
+type SFU_SubscribeClient interface {
+	Send(*SubscribeRequest) error
+	Recv() (*anypb.Any, error)
+	grpc.ClientStream
+}
+
+type sFUSubscribeClient struct {
+	grpc.ClientStream
+}
+
+func (x *sFUSubscribeClient) Send(m *SubscribeRequest) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *sFUSubscribeClient) Recv() (*anypb.Any, error) {
+	m := new(anypb.Any)
 	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -316,41 +262,71 @@ func (x *sFUSignalClient) Recv() (*Response, error) {
 
 // SFUServer is the server API for SFU service.
 type SFUServer interface {
-	Signal(SFU_SignalServer) error
+	Publish(SFU_PublishServer) error
+	Subscribe(SFU_SubscribeServer) error
 }
 
 // UnimplementedSFUServer can be embedded to have forward compatible implementations.
 type UnimplementedSFUServer struct {
 }
 
-func (*UnimplementedSFUServer) Signal(SFU_SignalServer) error {
-	return status.Errorf(codes.Unimplemented, "method Signal not implemented")
+func (*UnimplementedSFUServer) Publish(SFU_PublishServer) error {
+	return status.Errorf(codes.Unimplemented, "method Publish not implemented")
+}
+func (*UnimplementedSFUServer) Subscribe(SFU_SubscribeServer) error {
+	return status.Errorf(codes.Unimplemented, "method Subscribe not implemented")
 }
 
 func RegisterSFUServer(s *grpc.Server, srv SFUServer) {
 	s.RegisterService(&_SFU_serviceDesc, srv)
 }
 
-func _SFU_Signal_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(SFUServer).Signal(&sFUSignalServer{stream})
+func _SFU_Publish_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SFUServer).Publish(&sFUPublishServer{stream})
 }
 
-type SFU_SignalServer interface {
-	Send(*Response) error
-	Recv() (*Request, error)
+type SFU_PublishServer interface {
+	Send(*anypb.Any) error
+	Recv() (*anypb.Any, error)
 	grpc.ServerStream
 }
 
-type sFUSignalServer struct {
+type sFUPublishServer struct {
 	grpc.ServerStream
 }
 
-func (x *sFUSignalServer) Send(m *Response) error {
+func (x *sFUPublishServer) Send(m *anypb.Any) error {
 	return x.ServerStream.SendMsg(m)
 }
 
-func (x *sFUSignalServer) Recv() (*Request, error) {
-	m := new(Request)
+func (x *sFUPublishServer) Recv() (*anypb.Any, error) {
+	m := new(anypb.Any)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _SFU_Subscribe_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SFUServer).Subscribe(&sFUSubscribeServer{stream})
+}
+
+type SFU_SubscribeServer interface {
+	Send(*anypb.Any) error
+	Recv() (*SubscribeRequest, error)
+	grpc.ServerStream
+}
+
+type sFUSubscribeServer struct {
+	grpc.ServerStream
+}
+
+func (x *sFUSubscribeServer) Send(m *anypb.Any) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *sFUSubscribeServer) Recv() (*SubscribeRequest, error) {
+	m := new(SubscribeRequest)
 	if err := x.ServerStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
@@ -363,8 +339,14 @@ var _SFU_serviceDesc = grpc.ServiceDesc{
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Signal",
-			Handler:       _SFU_Signal_Handler,
+			StreamName:    "Publish",
+			Handler:       _SFU_Publish_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Subscribe",
+			Handler:       _SFU_Subscribe_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
