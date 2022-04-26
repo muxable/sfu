@@ -10,13 +10,17 @@ import (
 	"errors"
 )
 
+type AVFormatContext interface {
+	AVFormatContext() *C.AVFormatContext
+}
+
 type DecodeContext struct {
 	Sink       AVFrameWriteCloser
 	decoderctx *C.AVCodecContext
 	frame      *AVFrame
 }
 
-func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error) {
+func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
 	codec := C.avcodec_find_decoder(stream.stream.codecpar.codec_id)
 	if codec == nil {
 		return nil, errors.New("failed to find decoder")
@@ -32,7 +36,7 @@ func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error)
 	}
 
 	if stream.stream.codec.codec_type == C.AVMEDIA_TYPE_VIDEO {
-		decoderctx.framerate = C.av_guess_frame_rate(demuxer.avformatctx, stream.stream, nil)
+		decoderctx.framerate = C.av_guess_frame_rate(demuxer.AVFormatContext(), stream.stream, nil)
 	}
 
 	decoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY

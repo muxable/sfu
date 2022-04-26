@@ -99,7 +99,7 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 			}
 			switch stream.AVMediaType() {
 			case av.AVMediaTypeVideo:
-				encoder, err := av.NewEncoder(videoCodec, decoder)
+				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: videoCodec})
 				if err != nil {
 					return err
 				}
@@ -107,7 +107,7 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 				encoders[i] = encoder
 				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
 			case av.AVMediaTypeAudio:
-				encoder, err := av.NewEncoder(audioCodec, decoder)
+				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: audioCodec})
 				if err != nil {
 					return err
 				}

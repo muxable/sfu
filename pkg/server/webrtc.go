@@ -2,6 +2,8 @@ package server
 
 import (
 	"fmt"
+	"log"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -11,6 +13,7 @@ import (
 	av "github.com/muxable/sfu/pkg/av"
 	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
@@ -37,6 +40,7 @@ func RunWebRTCServer(addr string, trackHandler TrackHandler, videoCodec, audioCo
 		audioCodec:   audioCodec,
 		counts:       make(map[string]uint16),
 		buffers:      make(map[string]*buffer.ReorderBuffer),
+		sources:      make(map[string]map[webrtc.SSRC]*webrtc.PeerConnection),
 	})
 	return srv.Serve(conn)
 }
@@ -50,6 +54,7 @@ type SFUServer struct {
 
 	counts  map[string]uint16
 	buffers map[string]*buffer.ReorderBuffer
+	sources map[string]map[webrtc.SSRC]*webrtc.PeerConnection
 }
 
 type trackWrapper struct {
@@ -78,7 +83,7 @@ func (s *SFUServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID stri
 		}
 		switch stream.AVMediaType() {
 		case av.AVMediaTypeVideo:
-			encoder, err := av.NewEncoder(s.videoCodec, decoder)
+			encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: s.videoCodec})
 			if err != nil {
 				return nil, err
 			}
@@ -86,7 +91,7 @@ func (s *SFUServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID stri
 			encoders[i] = encoder
 			parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
 		case av.AVMediaTypeAudio:
-			encoder, err := av.NewEncoder(s.audioCodec, decoder)
+			encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: s.audioCodec})
 			if err != nil {
 				return nil, err
 			}
@@ -136,12 +141,25 @@ func (s *SFUServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID stri
 func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 	m := &webrtc.MediaEngine{}
 
-	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"ccnack", ""}}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeH265, 90000, 0, "", videoRTCPFeedback},
 		PayloadType:        119,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return err
+	}
+	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeOpus, 48000, 2, "minptime=10;useinbandfec=1", nil},
+		PayloadType:        111,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		panic(err)
+	}
+
+	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", videoRTCPFeedback},
+		PayloadType:        96,
+	}, webrtc.RTPCodecTypeVideo); err != nil {
+		panic(err)
 	}
 
 	if err := m.RegisterDefaultCodecs(); err != nil {
@@ -149,9 +167,32 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 	}
 
 	i := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
-		return err
-	}
+
+	// if err := webrtc.ConfigureRTCPReports(i); err != nil {
+	// 	return err
+	// }
+
+	// // if err := webrtc.ConfigureTWCCSender(m, i); err != nil {
+	// // 	return err
+	// // }
+
+	// // configure ccnack
+	// generator, err := ccnack.NewGeneratorInterceptor()
+	// if err != nil {
+	// 	return err
+	// }
+
+	// responder, err := ccnack.NewResponderInterceptor()
+	// if err != nil {
+	// 	return err
+	// }
+
+	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
+	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+	// i.Add(responder)
+	// i.Add(generator)
+
+	log.Printf("creating peer connection")
 
 	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
@@ -161,29 +202,61 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 	}
 
 	pc.OnTrack(func(tr *webrtc.TrackRemote, r *webrtc.RTPReceiver) {
-		s.Lock()
-
 		key := fmt.Sprintf("%s:%s:%s", tr.StreamID(), tr.ID(), tr.RID())
+
+		log.Printf("got track %s", key)
+		s.Lock()
 
 		if s.counts[key] == 0 {
 			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 5*time.Second)
 
 			go rtpio.CopyRTP(buffer, &trackWrapper{tr})
 
-			transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), buffer)
-			if err != nil {
-				zap.L().Error("failed to create transcoder", zap.Error(err))
-				s.Unlock()
-				return
-			}
+			go func() {
+				transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), buffer)
+				if err != nil {
+					zap.L().Error("failed to create transcoder", zap.Error(err))
+					s.Unlock()
+					return
+				}
 
-			go transcoder.Run()
+				if err := transcoder.Run(); err != nil {
+					zap.L().Error("failed to run transcoder", zap.Error(err))
+				}
+			}()
+
+			go func() {
+				for nack := range buffer.Nacks(100*time.Millisecond) {
+					s.Lock()
+					sources := s.sources[key]
+					if len(sources) == 0 {
+						zap.L().Warn("no sources for nack", zap.String("key", key))
+						s.Unlock()
+						continue
+					}
+
+					// pick a random source
+					var ssrcs []webrtc.SSRC
+					for ssrc := range sources {
+						ssrcs = append(ssrcs, ssrc)
+					}
+					ssrc := ssrcs[rand.Intn(len(ssrcs))]
+					nack.MediaSSRC = uint32(ssrc)
+					if err := sources[ssrc].WriteRTCP([]rtcp.Packet{nack}); err != nil {
+						zap.L().Error("failed to write nack", zap.Error(err))
+					}
+
+					s.Unlock()
+				}
+			}()
 
 			s.buffers[key] = buffer
+			s.sources[key] = make(map[webrtc.SSRC]*webrtc.PeerConnection)
 		} else {
 			go rtpio.CopyRTP(s.buffers[key], &trackWrapper{tr})
 		}
 		s.counts[key]++
+		s.sources[key][tr.SSRC()] = pc
 
 		s.Unlock()
 
@@ -197,11 +270,13 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 		s.Lock()
 
 		s.counts[key]--
+		delete(s.sources[key], tr.SSRC())
 		if s.counts[key] == 0 {
 			if err := s.buffers[key].Close(); err != nil {
 				zap.L().Error("failed to close buffer", zap.Error(err))
 			}
 			s.buffers[key] = nil
+			s.sources[key] = nil
 		}
 
 		s.Unlock()

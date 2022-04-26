@@ -80,7 +80,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 			}
 			switch stream.AVMediaType() {
 			case av.AVMediaTypeVideo:
-				encoder, err := av.NewEncoder(h.videoCodec, decoder)
+				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: h.videoCodec})
 				if err != nil {
 					zap.L().Error("failed to create encoder", zap.Error(err))
 					return
@@ -89,7 +89,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 				encoders[i] = encoder
 				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
 			case av.AVMediaTypeAudio:
-				encoder, err := av.NewEncoder(h.audioCodec, decoder)
+				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: h.audioCodec})
 				if err != nil {
 					zap.L().Error("failed to create encoder", zap.Error(err))
 					return

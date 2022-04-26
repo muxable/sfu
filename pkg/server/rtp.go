@@ -148,7 +148,7 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 						zap.L().Error("failed to create decoder", zap.Error(err))
 						return
 					}
-					encoder, err := av.NewEncoder(videoCodec, decoder)
+					encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: videoCodec})
 					if err != nil {
 						zap.L().Error("failed to create encoder", zap.Error(err))
 						return

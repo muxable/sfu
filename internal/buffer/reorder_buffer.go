@@ -2,9 +2,11 @@ package buffer
 
 import (
 	"math"
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"go.uber.org/zap"
 )
@@ -31,7 +33,8 @@ type ReorderBuffer struct {
 
 	evict uint16
 
-	insert chan struct{}
+	insert  chan struct{}
+	tickers []*time.Ticker
 }
 
 // NewJitterBuffer creates a new singular jitter buffer with the given context && delay.
@@ -75,7 +78,7 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 			// reject this packet, it's too old.
 			if q := b.buffer[p.SequenceNumber]; q == nil || q.Timestamp != p.Timestamp {
 				zap.L().Warn("rejecting packet",
-					zap.Uint16("seq", p.SequenceNumber), 
+					zap.Uint16("seq", p.SequenceNumber),
 					zap.Uint32("ts", p.Timestamp),
 					zap.Uint64("absTimestamp", pAbsTimestamp),
 					zap.Uint64("minAbsTimestamp", b.minAbsTsSeq),
@@ -109,9 +112,9 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 	// }
 
 	b.buffer[p.SequenceNumber] = &BufferedPacket{
-		Packet:   p,
+		Packet:       p,
 		EvictRTPTime: b.absTimestamp + b.delay,
-		AbsTsSeq: (b.absTimestamp << 16) + uint64(p.SequenceNumber),
+		AbsTsSeq:     (b.absTimestamp << 16) + uint64(p.SequenceNumber),
 	}
 
 	// notify the reader if it's waiting
@@ -216,6 +219,16 @@ func (b *ReorderBuffer) ReadRTP() (*rtp.Packet, error) {
 }
 
 func (b *ReorderBuffer) Close() error {
+	b.Lock()
+	defer b.Unlock()
+
+	close(b.insert)
+
+	// close any nack tickers
+	for _, n := range b.tickers {
+		n.Stop()
+	}
+
 	return nil
 }
 
@@ -239,5 +252,25 @@ func (b *ReorderBuffer) MissingSequenceNumbers() []uint16 {
 func (b *ReorderBuffer) rtpNow() uint64 {
 	now := time.Now()
 	ntpdt := now.Sub(b.startNTPTimestamp)
-	return b.startRTPTimestamp + uint64(ntpdt.Seconds() * float64(b.clockRate))
+	return b.startRTPTimestamp + uint64(ntpdt.Seconds()*float64(b.clockRate))
+}
+
+func (b *ReorderBuffer) Nacks(interval time.Duration) <-chan *rtcp.TransportLayerNack {
+	ticker := time.NewTicker(interval)
+	b.tickers = append(b.tickers, ticker)
+	ch := make(chan *rtcp.TransportLayerNack)
+	senderSSRC := rand.Uint32()
+	go func() {
+		for range ticker.C {
+			missing := b.MissingSequenceNumbers()
+			if len(missing) > 0 {
+				nack := &rtcp.TransportLayerNack{
+					SenderSSRC: senderSSRC,
+					Nacks:      rtcp.NackPairsFromSequenceNumbers(missing),
+				}
+				ch <- nack
+			}
+		}
+	}()
+	return ch
 }

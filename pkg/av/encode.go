@@ -11,20 +11,46 @@ import "C"
 import (
 	"errors"
 	"strings"
+	"unsafe"
 
 	"github.com/pion/webrtc/v3"
 )
 
 type EncodeContext struct {
-	codec           webrtc.RTPCodecCapability
 	encoderctx      *C.AVCodecContext
 	packet          *AVPacket
 	Sink            *IndexedSink
 	requestKeyframe bool
 }
 
-func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*EncodeContext, error) {
-	encodercodec := C.avcodec_find_encoder(AvCodec[codec.MimeType])
+type EncoderConfiguration struct {
+	Name           string // if unset, encoder will resolve by output type.
+	InitialBitrate int64
+	Codec          webrtc.RTPCodecCapability
+	Options        map[string]interface{}
+}
+
+func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeContext, error) {
+	var encodercodec *C.AVCodec
+	if config.Name == "" {
+		encodercodec = C.avcodec_find_encoder(AvCodec[config.Codec.MimeType])
+
+		// also autoconfigure options if necessary.
+		if config.Options == nil {
+			switch config.Codec.MimeType {
+			case webrtc.MimeTypeH264:
+				config.Options = DefaultH264EncoderOptions
+			case webrtc.MimeTypeVP8:
+				config.Options = DefaultVP8EncoderOptions
+			case webrtc.MimeTypeVP9:
+				config.Options = DefaultVP9EncoderOptions
+			}
+		}
+	} else {
+		cname := C.CString(config.Name)
+		defer C.free(unsafe.Pointer(cname))
+		encodercodec = C.avcodec_find_encoder_by_name(cname)
+	}
 	if encodercodec == nil {
 		return nil, errors.New("failed to start encoder")
 	}
@@ -34,87 +60,54 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 		return nil, errors.New("failed to create encoder context")
 	}
 
-	if strings.HasPrefix(codec.MimeType, "audio/") {
-		encoderctx.channels = C.int(codec.Channels)
-		encoderctx.channel_layout = C.uint64_t(C.av_get_default_channel_layout(C.int(codec.Channels)))
-		encoderctx.sample_rate = C.int(codec.ClockRate)
+	var opts *C.AVDictionary
+	defer C.av_dict_free(&opts)
+
+	if strings.HasPrefix(config.Codec.MimeType, "audio/") {
+		encoderctx.channels = C.int(config.Codec.Channels)
+		encoderctx.channel_layout = C.uint64_t(C.av_get_default_channel_layout(C.int(config.Codec.Channels)))
+		encoderctx.sample_rate = C.int(config.Codec.ClockRate)
 		encoderctx.sample_fmt = C.AV_SAMPLE_FMT_S16
-		encoderctx.time_base = C.AVRational{1, C.int(codec.ClockRate)}
+		encoderctx.time_base = C.AVRational{1, C.int(config.Codec.ClockRate)}
+
+		if config.InitialBitrate > 0 {
+			encoderctx.bit_rate = C.long(config.InitialBitrate)
+		} else {
+			encoderctx.bit_rate = 96 * 1000
+		}
 	}
-	if strings.HasPrefix(codec.MimeType, "video/") {
+	if strings.HasPrefix(config.Codec.MimeType, "video/") {
 		encoderctx.height = decoder.decoderctx.height
 		encoderctx.width = decoder.decoderctx.width
 		encoderctx.sample_aspect_ratio = decoder.decoderctx.sample_aspect_ratio
 		encoderctx.pix_fmt = C.AV_PIX_FMT_YUV420P
 		encoderctx.time_base = C.av_inv_q(decoder.decoderctx.framerate)
+
+		encoderctx.max_b_frames = 0
+		if config.InitialBitrate > 0 {
+			encoderctx.bit_rate = C.long(config.InitialBitrate)
+		} else {
+			encoderctx.bit_rate = 20 * 1000 * 1000
+		}
 	}
 
-	var opts *C.AVDictionary
-	defer C.av_dict_free(&opts)
-
-	switch codec.MimeType {
-	case webrtc.MimeTypeH264:
-		if averr := C.av_dict_set(&opts, C.CString("preset"), C.CString("ultrafast"), 0); averr < 0 {
-			return nil, av_err("av_dict_set", averr)
+	if config.Options != nil {
+		for k, v := range config.Options {
+			ckey := C.CString(k)
+			defer C.free(unsafe.Pointer(ckey))
+			switch v.(type) {
+			case int:
+				if averr := C.av_dict_set_int(&opts, ckey, C.long(v.(int)), 0); averr < 0 {
+					return nil, av_err("failed to set option", averr)
+				}
+			case string:
+				cval := C.CString(v.(string))
+				defer C.free(unsafe.Pointer(cval))
+				if averr := C.av_dict_set(&opts, ckey, cval, 0); averr < 0 {
+					return nil, av_err("failed to set option", averr)
+				}
+			}
 		}
-		// TODO: unclear why this doesn't work, it causes only keyframes to be rendered.
-
-		// if averr := C.av_dict_set(&opts, C.CString("tune"), C.CString("zerolatency"), 0); averr < 0 {
-		// 	return nil, av_err("av_dict_set", averr)
-		// }
-		if averr := C.av_dict_set(&opts, C.CString("level"), C.CString("4.0"), 0); averr < 0 {
-			return nil, av_err("av_dict_set", averr)
-		}
-		if averr := C.av_dict_set(&opts, C.CString("profile"), C.CString("baseline"), 0); averr < 0 {
-			return nil, av_err("av_dict_set", averr)
-		}
-
-		encoderctx.bit_rate = 20 * 1000 * 1000
-		encoderctx.rc_buffer_size = 4 * 1000 * 1000
-		encoderctx.rc_max_rate = 20 * 1000 * 1000
-		encoderctx.rc_min_rate = 1 * 1000 * 1000
-	case webrtc.MimeTypeVP8:
-		if averr := C.av_dict_set(&opts, C.CString("deadline"), C.CString("realtime"), 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-		if averr := C.av_dict_set_int(&opts, C.CString("cpu-used"), 5, 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-		// if averr := C.av_dict_set_int(&opts, C.CString("error-resilient"), 1, 0); averr < 0 {
-		// 	return nil, av_err("av_dict_set_int", averr)
-		// }
-		// if averr := C.av_dict_set_int(&opts, C.CString("auto-alt-ref"), 1, 0); averr < 0 {
-		// 	return nil, av_err("av_dict_set_int", averr)
-		// }
-		if averr := C.av_dict_set_int(&opts, C.CString("crf"), 20, 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-
-		encoderctx.max_b_frames = 0
-		encoderctx.bit_rate = 20 * 1000 * 1000
-		encoderctx.gop_size = 10
-	case webrtc.MimeTypeVP9:
-		if averr := C.av_dict_set(&opts, C.CString("deadline"), C.CString("realtime"), 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-		if averr := C.av_dict_set_int(&opts, C.CString("cpu-used"), 5, 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-		// if averr := C.av_dict_set_int(&opts, C.CString("error-resilient"), 1, 0); averr < 0 {
-		// 	return nil, av_err("av_dict_set_int", averr)
-		// }
-		// if averr := C.av_dict_set_int(&opts, C.CString("auto-alt-ref"), 1, 0); averr < 0 {
-		// 	return nil, av_err("av_dict_set_int", averr)
-		// }
-		if averr := C.av_dict_set_int(&opts, C.CString("crf"), 20, 0); averr < 0 {
-			return nil, av_err("av_dict_set_int", averr)
-		}
-
-		encoderctx.max_b_frames = 0
-		encoderctx.bit_rate = 20 * 1000 * 1000
-		encoderctx.gop_size = 10
-	case webrtc.MimeTypeOpus:
-		encoderctx.bit_rate = 96 * 1000
 	}
 
 	if averr := C.avcodec_open2(encoderctx, encodercodec, &opts); averr < 0 {
@@ -122,7 +115,6 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 	}
 
 	return &EncodeContext{
-		codec:      codec,
 		packet:     NewAVPacket(),
 		encoderctx: encoderctx,
 	}, nil
@@ -130,6 +122,10 @@ func NewEncoder(codec webrtc.RTPCodecCapability, decoder *DecodeContext) (*Encod
 
 func (c *EncodeContext) RequestKeyframe() {
 	c.requestKeyframe = true
+}
+
+func (c *EncodeContext) SetBitrate(bitrate int64) {
+	c.encoderctx.bit_rate = C.long(bitrate)
 }
 
 func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {

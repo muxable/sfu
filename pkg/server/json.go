@@ -33,16 +33,16 @@ func RunJSONServer(addr string, node *cdn.LocalCDN) error {
 		}, webrtc.RTPCodecTypeAudio); err != nil {
 		return err
 	}
-
+	
 	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
 
-	// if err := m.RegisterCodec(
-	// 	webrtc.RTPCodecParameters{
-	// 		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", nil},
-	// 		PayloadType:        96,
-	// 	}, webrtc.RTPCodecTypeVideo); err != nil {
-	// 	return err
-	// }
+	if err := m.RegisterCodec(
+		webrtc.RTPCodecParameters{
+			RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", nil},
+			PayloadType:        96,
+		}, webrtc.RTPCodecTypeVideo); err != nil {
+		return err
+	}
 
 	// if err := m.RegisterCodec(
 	// 	webrtc.RTPCodecParameters{

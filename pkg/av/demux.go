@@ -135,6 +135,10 @@ func NewRawDemuxer(in io.Reader) (*DemuxContext, error) {
 	return c, nil
 }
 
+func (c *DemuxContext) AVFormatContext() *C.AVFormatContext {
+	return c.avformatctx
+}
+
 //export goReadBufferFunc
 func goReadBufferFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.int {
 	d := pointer.Restore(opaque).(*DemuxContext)
@@ -224,3 +228,5 @@ func (c *DemuxContext) Close() error {
 
 	return nil
 }
+
+var _ AVFormatContext = (*DeviceContext)(nil)
