@@ -16,7 +16,6 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
-	"github.com/rs/zerolog/log"
 	"go.uber.org/zap"
 )
 
@@ -95,7 +94,7 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 							Nacks:      rtcp.NackPairsFromSequenceNumbers(retained),
 						}
 						if err := srv.WriteRTCP([]rtcp.Packet{nack}); err != nil {
-							log.Error().Err(err).Msg("failed to write NACK")
+							zap.L().Error("failed to write nack", zap.Error(err))
 						}
 					case <-done:
 						return
@@ -103,7 +102,7 @@ func RunRTPServer(addr string, th TrackHandler, videoCodec, audioCodec webrtc.RT
 				}
 			}()
 
-			log.Info().Str("CNAME", params.CNAME).Uint32("SSRC", uint32(source.SSRC)).Uint8("PayloadType", uint8(params.PayloadType)).Msg("new inbound stream")
+			zap.L().Info("new source", zap.String("cname", params.CNAME), zap.Uint32("ssrc", uint32(source.SSRC)))
 
 			if codec.MimeType == webrtc.MimeTypeOpus {
 				// pass the audio straight through to a track.

@@ -4,14 +4,11 @@ import (
 	"flag"
 	"net"
 	"net/http"
-	"os"
 
 	"github.com/muxable/sfu/pkg/cdn"
 	"github.com/muxable/sfu/pkg/server"
 	"github.com/pion/webrtc/v3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +38,6 @@ func main() {
 			return
 		}
 	}()
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	rtpAddr := flag.String("rtp", "0.0.0.0:5000", "The address to receive from")
 	rtmpAddr := flag.String("rtmp", "0.0.0.0:1935", "The address to receive from")

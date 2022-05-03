@@ -15,7 +15,7 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 	"github.com/pion/webrtc/v3"
-	"github.com/rs/zerolog/log"
+	"go.uber.org/zap"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
 )
@@ -89,14 +89,14 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 					}
 					hData, err := header.Marshal()
 					if err != nil {
-						log.Error().Err(err).Msg("failed to marshal rtcp header")
+						zap.L().Error("failed to marshal rtcp header", zap.Error(err))
 						continue
 					}
 					binary.BigEndian.PutUint32(buf[4:8], uint32(ccSSRC))
 					copy(buf[8:], payload)
 					copy(buf, hData)
 					if _, err := conn.WriteToUDP(buf, cc.sender); err != nil {
-						log.Error().Err(err).Msg("failed to send congestion control packet")
+						zap.L().Error("failed to send congestion control packet", zap.Error(err))
 						delete(m.ccfb, key)
 					}
 				}
@@ -112,13 +112,13 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 		for {
 			n, oobn, _, sender, err := m.conn.ReadMsgUDP(buf, oob)
 			if err != nil {
-				log.Error().Err(err).Msg("failed to read udp packet")
+				zap.L().Error("failed to read UDP packet", zap.Error(err))
 				return
 			}
 
 			ssrcs, err := m.parseSSRCs(buf[:n], oob[:oobn], sender)
 			if err != nil {
-				log.Error().Err(err).Msg("failed to parse ssrcs")
+				zap.L().Error("failed to parse SSRCs", zap.Error(err))
 				continue
 			}
 
@@ -136,7 +136,7 @@ func NewSessionizer(conn *net.UDPConn, mtu int) (*Sessionizer, error) {
 					m.sessionsCh <- m.sessions[ssrc]
 				}
 				if _, err := m.sessions[ssrc].w.Write(buf[:n]); err != nil {
-					log.Error().Err(err).Msg("failed to write to session")
+					zap.L().Error("failed to write to session", zap.Error(err))
 				}
 			}
 			m.Unlock()
@@ -237,7 +237,7 @@ func (m *Sessionizer) parseRTCPSSRCs(sender *net.UDPAddr, buf []byte, ts time.Ti
 				copy(buf, hData)
 				copy(buf[len(hData):], payload)
 				if _, err := m.conn.WriteToUDP(buf, sender); err != nil {
-					log.Error().Err(err).Msg("failed to send congestion control packet")
+					zap.L().Error("failed to send congestion control packet", zap.Error(err))
 				}
 				return nil, nil
 			}
@@ -262,7 +262,7 @@ func (m *Sessionizer) WriteRTCP(pkts []rtcp.Packet) error {
 			// forward this packet to that ssrc's source.
 			if session, ok := m.sessions[webrtc.SSRC(ssrc)]; ok {
 				if _, err := m.conn.WriteToUDP(buf, session.lastSender); err != nil {
-					log.Error().Err(err).Msg("failed to send rtcp packet")
+					zap.L().Error("failed to write to session", zap.Error(err))
 				}
 			}
 		}

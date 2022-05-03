@@ -16,7 +16,6 @@ require (
 	github.com/pion/webrtc/v3 v3.1.23
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.11.0
-	github.com/rs/zerolog v1.26.1
 	github.com/yutopp/go-flv v0.2.0
 	github.com/yutopp/go-rtmp v0.0.1
 	go.uber.org/zap v1.20.0
