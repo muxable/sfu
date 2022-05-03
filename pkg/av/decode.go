@@ -8,6 +8,8 @@ package av
 import "C"
 import (
 	"errors"
+
+	"github.com/pion/webrtc/v3"
 )
 
 type AVFormatContext interface {
@@ -18,6 +20,7 @@ type DecodeContext struct {
 	Sink       AVFrameWriteCloser
 	decoderctx *C.AVCodecContext
 	frame      *AVFrame
+	webrtc.RTPCodecType
 }
 
 func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
@@ -35,7 +38,7 @@ func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, erro
 		return nil, av_err("avcodec_parameters_to_context", averr)
 	}
 
-	if stream.stream.codec.codec_type == C.AVMEDIA_TYPE_VIDEO {
+	if stream.stream.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
 		decoderctx.framerate = C.av_guess_frame_rate(demuxer.AVFormatContext(), stream.stream, nil)
 	}
 
@@ -47,9 +50,18 @@ func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, erro
 		return nil, av_err("avcodec_open2", averr)
 	}
 
+	codecType := webrtc.RTPCodecType(0)
+	switch stream.stream.codecpar.codec_type {
+	case C.AVMEDIA_TYPE_AUDIO:
+		codecType = webrtc.RTPCodecType(webrtc.RTPCodecTypeAudio)
+	case C.AVMEDIA_TYPE_VIDEO:
+		codecType = webrtc.RTPCodecType(webrtc.RTPCodecTypeVideo)
+	}
+
 	return &DecodeContext{
-		frame:      NewAVFrame(),
-		decoderctx: decoderctx,
+		frame:        NewAVFrame(),
+		decoderctx:   decoderctx,
+		RTPCodecType: codecType,
 	}, nil
 }
 

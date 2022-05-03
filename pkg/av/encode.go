@@ -71,7 +71,7 @@ func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeCo
 		encoderctx.time_base = C.AVRational{1, C.int(config.Codec.ClockRate)}
 
 		if config.InitialBitrate > 0 {
-			encoderctx.bit_rate = C.long(config.InitialBitrate)
+			encoderctx.bit_rate = C.int64_t(config.InitialBitrate)
 		} else {
 			encoderctx.bit_rate = 96 * 1000
 		}
@@ -85,7 +85,7 @@ func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeCo
 
 		encoderctx.max_b_frames = 0
 		if config.InitialBitrate > 0 {
-			encoderctx.bit_rate = C.long(config.InitialBitrate)
+			encoderctx.bit_rate = C.int64_t(config.InitialBitrate)
 		} else {
 			encoderctx.bit_rate = 20 * 1000 * 1000
 		}
@@ -97,7 +97,7 @@ func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeCo
 			defer C.free(unsafe.Pointer(ckey))
 			switch v.(type) {
 			case int:
-				if averr := C.av_dict_set_int(&opts, ckey, C.long(v.(int)), 0); averr < 0 {
+				if averr := C.av_dict_set_int(&opts, ckey, C.int64_t(v.(int)), 0); averr < 0 {
 					return nil, av_err("failed to set option", averr)
 				}
 			case string:
@@ -125,7 +125,7 @@ func (c *EncodeContext) RequestKeyframe() {
 }
 
 func (c *EncodeContext) SetBitrate(bitrate int64) {
-	c.encoderctx.bit_rate = C.long(bitrate)
+	c.encoderctx.bit_rate = C.int64_t(bitrate)
 }
 
 func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
