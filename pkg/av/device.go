@@ -1,7 +1,8 @@
 package av
 
 /*
-#cgo pkg-config: libavformat
+#cgo pkg-config: libavformat libavdevice
+#include <libavdevice/avdevice.h>
 #include <libavformat/avformat.h>
 #include "demux.h"
 */
@@ -15,6 +16,10 @@ type DeviceContext struct {
 	Sinks       []*IndexedSink
 	avformatctx *C.AVFormatContext
 	packet      *AVPacket
+}
+
+func init() {
+	C.avdevice_register_all()
 }
 
 // v4l2, /dev/video0 for example
