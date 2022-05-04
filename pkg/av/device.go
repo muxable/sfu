@@ -69,7 +69,6 @@ func (c *DeviceContext) Run() error {
 		return errors.New("number of streams does not match number of sinks")
 	}
 	for {
-		C.av_new_packet(c.packet.packet, c.packet.packet.size)
 		if averr := C.av_read_frame(c.avformatctx, c.packet.packet); averr < 0 {
 			return av_err("av_read_frame", averr)
 		}
@@ -80,6 +79,7 @@ func (c *DeviceContext) Run() error {
 				return err
 			}
 		}
+		C.av_packet_unref(c.packet.packet)
 	}
 }
 
