@@ -95,7 +95,7 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 	// dt := time.Duration(b.absTimestamp-b.startRTPTimestamp) * time.Second / time.Duration(b.clockRate)
 	// emitTime := b.startNTPTimestamp.Add(b.absTimestamp + b.delay)
 
-	zap.L().Debug("received packet", zap.Uint16("seq", p.SequenceNumber), zap.Uint32("timestamp", p.Timestamp), zap.Uint16("evict", b.evict), zap.Uint16("count", b.count), zap.Uint64("absTimestamp", b.absTimestamp))
+	// zap.L().Debug("received packet", zap.Uint16("seq", p.SequenceNumber), zap.Uint32("timestamp", p.Timestamp), zap.Uint16("evict", b.evict), zap.Uint16("count", b.count), zap.Uint64("absTimestamp", b.absTimestamp))
 
 	// add it to the buffer
 	if b.buffer[p.SequenceNumber] != nil {
@@ -154,7 +154,7 @@ func (b *ReorderBuffer) ReadRTP() (*rtp.Packet, error) {
 			b.evict++
 			b.minAbsTsSeq = p.AbsTsSeq + 1
 			b.Unlock()
-			zap.L().Debug("immediate read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
+			// zap.L().Debug("immediate read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
 			return p.Packet, nil
 		}
 
@@ -243,8 +243,10 @@ func (b *ReorderBuffer) MissingSequenceNumbers() []uint16 {
 			j--
 			continue
 		}
-		// mark this packet as missing.
-		missing = append(missing, i)
+		// mark this packet as missing, ignoring the [0, b.evict) range if uninitialized.
+		if b.minAbsTsSeq > 0 || j < b.count {
+			missing = append(missing, i)
+		}
 	}
 	return missing
 }

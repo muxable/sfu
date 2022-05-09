@@ -11,6 +11,7 @@ import (
 	"github.com/muxable/sfu/api"
 	"github.com/muxable/sfu/internal/buffer"
 	av "github.com/muxable/sfu/pkg/av"
+	"github.com/muxable/sfu/pkg/ccnack"
 	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
@@ -168,29 +169,29 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 
 	i := &interceptor.Registry{}
 
-	// if err := webrtc.ConfigureRTCPReports(i); err != nil {
-	// 	return err
-	// }
+	if err := webrtc.ConfigureRTCPReports(i); err != nil {
+		return err
+	}
 
-	// // if err := webrtc.ConfigureTWCCSender(m, i); err != nil {
-	// // 	return err
-	// // }
+	if err := webrtc.ConfigureTWCCSender(m, i); err != nil {
+		return err
+	}
 
-	// // configure ccnack
-	// generator, err := ccnack.NewGeneratorInterceptor()
-	// if err != nil {
-	// 	return err
-	// }
+	// configure ccnack
+	generator, err := ccnack.NewGeneratorInterceptor()
+	if err != nil {
+		return err
+	}
 
-	// responder, err := ccnack.NewResponderInterceptor()
-	// if err != nil {
-	// 	return err
-	// }
+	responder, err := ccnack.NewResponderInterceptor()
+	if err != nil {
+		return err
+	}
 
-	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
-	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
-	// i.Add(responder)
-	// i.Add(generator)
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+	i.Add(responder)
+	i.Add(generator)
 
 	log.Printf("creating peer connection")
 

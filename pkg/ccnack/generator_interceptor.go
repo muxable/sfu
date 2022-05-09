@@ -1,13 +1,13 @@
 package ccnack
 
 import (
+	"log"
 	"sync"
 	"time"
 
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
-	"go.uber.org/zap"
 )
 
 // GeneratorInterceptorFactory is a interceptor.Factory for a GeneratorInterceptor
@@ -169,9 +169,11 @@ func (n *GeneratorInterceptor) loop(rtcpWriter interceptor.RTCPWriter) {
 						Nacks:      rtcp.NackPairsFromSequenceNumbers(missing),
 					}
 
-					if _, err := rtcpWriter.Write([]rtcp.Packet{nack}, interceptor.Attributes{}); err != nil {
-						zap.L().Error("failed to write rtcp packet", zap.Error(err))
-					}
+					log.Printf("ignoring nack %v", nack)
+
+					// if _, err := rtcpWriter.Write([]rtcp.Packet{nack}, interceptor.Attributes{}); err != nil {
+					// 	zap.L().Error("failed to write rtcp packet", zap.Error(err))
+					// }
 				}
 			}()
 		case <-n.close:
