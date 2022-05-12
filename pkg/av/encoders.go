@@ -2,7 +2,6 @@ package av
 
 var DefaultH264EncoderOptions = map[string]interface{} {
 	"preset": "ultrafast",
-	"level": "4.0",
 	"profile": "baseline",
 }
 

@@ -122,7 +122,7 @@ func NewRawDemuxer(in io.Reader) (*DemuxContext, error) {
 	}
 
 	avformatctx.pb = avioctx
-	avformatctx.probesize = 65536
+	avformatctx.probesize = 10 * 65536
 
 	if averr := C.avformat_open_input(&avformatctx, nil, nil, nil); averr < 0 {
 		return nil, av_err("avformat_open_input", averr)

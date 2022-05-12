@@ -39,14 +39,14 @@ func (c *DeviceContext) NewDecoders() (DecodeContexts, error) {
 	return decoders, nil
 }
 
-func (c DecodeContexts) MapEncoderConfigurations(audioCodec, videoCodec webrtc.RTPCodecCapability) ([]*EncoderConfiguration, error) {
+func (c DecodeContexts) MapEncoderConfigurations(audio, video *EncoderConfiguration) ([]*EncoderConfiguration, error) {
 	configs := make([]*EncoderConfiguration, len(c))
 	for i, decoder := range c {
 		switch decoder.RTPCodecType {
 		case webrtc.RTPCodecTypeAudio:
-			configs[i] = &EncoderConfiguration{Codec: audioCodec}
+			configs[i] = audio
 		case webrtc.RTPCodecTypeVideo:
-			configs[i] = &EncoderConfiguration{Codec: videoCodec}
+			configs[i] = video
 		default:
 			return nil, errors.New("unsupported media type")
 		}
@@ -61,14 +61,29 @@ func (c DecodeContexts) NewEncoders(configs []*EncoderConfiguration) (EncodeCont
 		if err != nil {
 			return nil, err
 		}
-		decoder.Sink = encoder
 		encoders[i] = encoder
 	}
 	return encoders, nil
 }
 
 func (c *DecodeContext) NewEncoder(configuration *EncoderConfiguration) (*EncodeContext, error) {
-	enc, err := NewEncoder(c, configuration)
+	// copy the parameters from the decoder if they're not overwritten.
+	if configuration.Width == 0 {
+		configuration.Width = uint32(c.decoderctx.width)
+	}
+	if configuration.Height == 0 {
+		configuration.Height = uint32(c.decoderctx.height)
+	}
+	if configuration.SampleAspectRatioNumerator == 0 || configuration.SampleAspectRatioDenominator == 0 {
+		configuration.SampleAspectRatioNumerator = uint32(c.decoderctx.sample_aspect_ratio.num)
+		configuration.SampleAspectRatioDenominator = uint32(c.decoderctx.sample_aspect_ratio.den)
+	}
+	if configuration.FrameRateNumerator == 0 || configuration.FrameRateDenominator == 0 {
+		configuration.FrameRateNumerator = uint32(c.decoderctx.framerate.num)
+		configuration.FrameRateDenominator = uint32(c.decoderctx.framerate.den)
+	}
+
+	enc, err := NewEncoder(configuration)
 	if err != nil {
 		return nil, err
 	}
@@ -76,16 +91,13 @@ func (c *DecodeContext) NewEncoder(configuration *EncoderConfiguration) (*Encode
 	// check if we need to resample.
 	switch c.RTPCodecType {
 	case webrtc.RTPCodecTypeAudio:
-	if c.decoderctx.sample_rate != enc.encoderctx.sample_rate {
-		resampler, err := NewResampler(c, enc)
+		filter, err := NewFilter(c, enc)
 		if err != nil {
 			return nil, err
 		}
-		c.Sink = resampler
-		resampler.Sink = enc
-	} else {
-		c.Sink = enc
-	}
+
+		c.Sink = filter
+		filter.Sink = enc
 	case webrtc.RTPCodecTypeVideo:
 		c.Sink = enc
 	}

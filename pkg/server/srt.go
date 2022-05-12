@@ -87,43 +87,19 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 		if err != nil {
 			return err
 		}
-		streams := demux.Streams()
-		decoders := make([]*av.DecodeContext, len(streams))
-		converters := make([]*av.ResampleContext, len(streams))
-		encoders := make([]*av.EncodeContext, len(streams))
-		parameters := make([]*av.AVCodecParameters, len(streams))
-		for i, stream := range demux.Streams() {
-			decoder, err := av.NewDecoder(demux, stream)
-			if err != nil {
-				return err
-			}
-			switch stream.AVMediaType() {
-			case av.AVMediaTypeVideo:
-				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: videoCodec})
-				if err != nil {
-					return err
-				}
-				decoders[i] = decoder
-				encoders[i] = encoder
-				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
-			case av.AVMediaTypeAudio:
-				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: audioCodec})
-				if err != nil {
-					return err
-				}
-				resampler, err := av.NewResampler(decoder, encoder)
-				if err != nil {
-					return err
-				}
-				decoders[i] = decoder
-				converters[i] = resampler
-				encoders[i] = encoder
-				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
-			default:
-				zap.L().Error("unsupported media type", zap.Int("media_type", int(stream.AVMediaType())))
-			}
+		decoders, err := demux.NewDecoders()
+		if err != nil {
+			return err
 		}
-		mux, err := av.NewRTPMuxer(parameters)
+		configs, err := decoders.MapEncoderConfigurations(&av.EncoderConfiguration{Codec: audioCodec}, &av.EncoderConfiguration{Codec: videoCodec})
+		if err != nil {
+			return err
+		}
+		encoders, err := decoders.NewEncoders(configs)
+		if err != nil {
+			return err
+		}
+		mux, err := encoders.NewRTPMuxer()
 		if err != nil {
 			return err
 		}
@@ -134,18 +110,6 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 		trackSink, err := NewTrackSink(params, items["r"], trackHandler)
 		if err != nil {
 			return err
-		}
-
-		// wire them together
-		for i := 0; i < len(streams); i++ {
-			demux.Sinks = append(demux.Sinks, &av.IndexedSink{AVPacketWriteCloser: decoders[i], Index: 0})
-			if resampler := converters[i]; resampler != nil {
-				decoders[i].Sink = resampler
-				resampler.Sink = encoders[i]
-			} else {
-				decoders[i].Sink = encoders[i]
-			}
-			encoders[i].Sink = &av.IndexedSink{AVPacketWriteCloser: mux, Index: i}
 		}
 		mux.Sink = trackSink
 

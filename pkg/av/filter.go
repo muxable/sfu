@@ -1,119 +1,225 @@
 package av
 
 /*
-#cgo pkg-config: libavcodec libavformat libavutil
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/avutil.h>
-#include <libavutil/channel_layout.h>
+#cgo pkg-config: libavfilter libavutil
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
+#include <libavutil/opt.h>
+#include <libavutil/pixdesc.h>
 */
 import "C"
 import (
 	"errors"
-	"strings"
+	"fmt"
+	"log"
 	"unsafe"
-
-	"github.com/pion/webrtc/v3"
 )
 
 type FilterContext struct {
-	buffersrcctx    *C.AVFilterContext
-	buffersinkctx   *C.AVFilterContext
-	filtergraph     *C.AVFilterGraph
-	frame           *AVFrame
-	Sink            *IndexedSink
-	requestKeyframe bool
+	buffersrcctx  *C.AVFilterContext
+	buffersinkctx *C.AVFilterContext
+	filtergraph   *C.AVFilterGraph
+	frame         *AVFrame
+	Sink          AVFrameWriteCloser
 }
 
-type FilterConfiguration struct {
-	Name           string // if unset, encoder will resolve by output type.
-	InitialBitrate int64
-	Codec          webrtc.RTPCodecCapability
-	Options        map[string]interface{}
-}
+var (
+	cbuffer         = C.CString("buffer")
+	cbuffersink     = C.CString("buffersink")
+	cabuffer        = C.CString("abuffer")
+	cabuffersink    = C.CString("abuffersink")
+	cin             = C.CString("in")
+	cout            = C.CString("out")
+	csamplefmts     = C.CString("sample_fmts")
+	csamplerates    = C.CString("sample_rates")
+	cchannellayouts = C.CString("channel_layouts")
+)
 
-func NewFilter(desc string) (*FilterContext, error) {
-	cdescr := C.CString(desc)
-	defer C.free(unsafe.Pointer(cdescr))
+func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, error) {
+	filtergraph := C.avfilter_graph_alloc()
+	if filtergraph == nil {
+		return nil, errors.New("failed to allocate filter graph")
+	}
 
-	buffersrc := C.avfilter_get_by_name("buffer")
-	if buffersrc == nil {
-		return nil, errors.New("failed to find buffer filter")
-	}
-	buffersink := C.avfilter_get_by_name("buffersink")
-	if buffersink == nil {
-		return nil, errors.New("failed to find buffersink filter")
-	}
 	outputs := C.avfilter_inout_alloc()
 	inputs := C.avfilter_inout_alloc()
 	if outputs == nil || inputs == nil {
 		return nil, errors.New("failed to allocate filter inout")
 	}
+	defer C.avfilter_inout_free(&inputs)
+	defer C.avfilter_inout_free(&outputs)
 
 	var buffersinkctx *C.AVFilterContext
 	var buffersrcctx *C.AVFilterContext
-	
-    filtergraph = C.avfilter_graph_alloc()
 
-    snprintf(args, sizeof(args),
-            "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
-            dec_ctx->width, dec_ctx->height, dec_ctx->pix_fmt,
-            dec_ctx->time_base.num, dec_ctx->time_base.den,
-            dec_ctx->sample_aspect_ratio.num, dec_ctx->sample_aspect_ratio.den);
-    if averr := C.avfilter_graph_create_filter(buffersrc_ctx, buffersrc, "in",
-                                       args, nil, filtergraph); averr < 0 {
-		return nil, av_err("avfilter_graph_create_filter", averr)
+	decctx := decoder.decoderctx
+	encctx := encoder.encoderctx
+
+	if decctx.codec_type != encctx.codec_type {
+		return nil, errors.New("codec types do not match")
 	}
+	switch decctx.codec_type {
+	case C.AVMEDIA_TYPE_VIDEO:
+		buffersrc := C.avfilter_get_by_name(cbuffer)
+		if buffersrc == nil {
+			return nil, errors.New("failed to find buffer filter")
+		}
+		buffersink := C.avfilter_get_by_name(cbuffersink)
+		if buffersink == nil {
+			return nil, errors.New("failed to find buffersink filter")
+		}
 
-    buffersink_params := C.av_buffersink_params_alloc()
-	defer C.av_free(unsafe.Pointer(buffersink_params))
+		decdesc := fmt.Sprintf(
+			"video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:pixel_aspect=%d/%d",
+			decctx.width, decctx.height, decctx.pix_fmt,
+			decctx.time_base.num, decctx.time_base.den,
+			decctx.sample_aspect_ratio.num, decctx.sample_aspect_ratio.den)
 
-    buffersink_params.pixel_fmts = pix_fmts
+		cdecdesc := C.CString(decdesc)
+		defer C.free(unsafe.Pointer(cdecdesc))
 
-    if averr := C.avfilter_graph_create_filter(buffersinkctx, buffersink, "out", nil, buffersink_params, filter_graph); averr < 0 {
-		return nil, av_err("avfilter_graph_create_filter", averr)
-    }
-    outputs.name       = av_strdup("in")
-    outputs.filter_ctx = buffersrc_ctx
-    outputs.pad_idx    = 0
-    outputs.next       = nil
-    inputs.name       = av_strdup("out")
-    inputs.filter_ctx = buffersink_ctx
-    inputs.pad_idx    = 0
-    inputs.next       = nil
-	
-    if averr := C.avfilter_graph_parse_ptr(filtergraph, cdescr, &inputs, &outputs, nil)) < 0; averr < 0 {
-		return nil, av_err("avfilter_graph_parse_ptr", averr)
-	}
-    if averr := C.avfilter_graph_config(filtergraph, nil)) < 0; averr < 0 {
-		return nil, av_err("avfilter_graph_config", averr)
+		if averr := C.avfilter_graph_create_filter(&buffersrcctx, buffersrc, cin, cdecdesc, nil, filtergraph); averr < 0 {
+			return nil, av_err("avfilter_graph_create_filter", averr)
+		}
+
+		if averr := C.avfilter_graph_create_filter(&buffersinkctx, buffersink, cout, nil, nil, filtergraph); averr < 0 {
+			return nil, av_err("avfilter_graph_create_filter", averr)
+		}
+
+		if averr := C.av_opt_set_bin(
+			unsafe.Pointer(buffersinkctx), C.CString("pix_fmts"),
+			(*C.uint8_t)(unsafe.Pointer(&encctx.pix_fmt)), 4, C.AV_OPT_SEARCH_CHILDREN); averr < 0 {
+			return nil, av_err("av_opt_set_bin", averr)
+		}
+
+		outputs.name = C.av_strdup(cin)
+		outputs.filter_ctx = buffersrcctx
+		outputs.pad_idx = 0
+		outputs.next = nil
+		inputs.name = C.av_strdup(cout)
+		inputs.filter_ctx = buffersinkctx
+		inputs.pad_idx = 0
+		inputs.next = nil
+
+		filterdesc := "null"
+		// fmt.Sprintf(
+		// 	"minterpolate=fps=%d/%d:mi_mode=mci,format=pix_fmts=%s,scale=w=%d:h=%d",
+		// 	encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
+		// 	encctx.width, encctx.height)
+
+		cfilterdesc := C.CString(filterdesc)
+		defer C.free(unsafe.Pointer(cfilterdesc))
+
+		if averr := C.avfilter_graph_parse_ptr(filtergraph, cfilterdesc, &inputs, &outputs, nil); averr < 0 {
+			return nil, av_err("avfilter_graph_parse_ptr video", averr)
+		}
+		if averr := C.avfilter_graph_config(filtergraph, nil); averr < 0 {
+			return nil, av_err("avfilter_graph_config", averr)
+		}
+
+	case C.AVMEDIA_TYPE_AUDIO:
+		buffersrc := C.avfilter_get_by_name(cabuffer)
+		if buffersrc == nil {
+			return nil, errors.New("failed to find buffer filter")
+		}
+		buffersink := C.avfilter_get_by_name(cabuffersink)
+		if buffersink == nil {
+			return nil, errors.New("failed to find buffersink filter")
+		}
+
+		decdesc := fmt.Sprintf(
+			"time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%016x",
+			decctx.time_base.num, decctx.time_base.den, decctx.sample_rate,
+			C.GoString(C.av_get_sample_fmt_name(decctx.sample_fmt)),
+			decctx.channel_layout)
+
+		cdecdesc := C.CString(decdesc)
+		defer C.free(unsafe.Pointer(cdecdesc))
+
+		if averr := C.avfilter_graph_create_filter(&buffersrcctx, buffersrc, cin, cdecdesc, nil, filtergraph); averr < 0 {
+			return nil, av_err("avfilter_graph_create_filter", averr)
+		}
+
+		if averr := C.avfilter_graph_create_filter(&buffersinkctx, buffersink, cout, nil, nil, filtergraph); averr < 0 {
+			return nil, av_err("avfilter_graph_create_filter", averr)
+		}
+
+		if averr := C.av_opt_set_bin(
+			unsafe.Pointer(buffersinkctx), csamplefmts,
+			(*C.uint8_t)(unsafe.Pointer(&encctx.sample_fmt)), 4, C.AV_OPT_SEARCH_CHILDREN); averr < 0 {
+			return nil, av_err("av_opt_set_bin", averr)
+		}
+		if averr := C.av_opt_set_bin(
+			unsafe.Pointer(buffersinkctx), cchannellayouts,
+			(*C.uint8_t)(unsafe.Pointer(&encctx.channel_layout)), 8, C.AV_OPT_SEARCH_CHILDREN); averr < 0 {
+			return nil, av_err("av_opt_set_bin", averr)
+		}
+		if averr := C.av_opt_set_bin(
+			unsafe.Pointer(buffersinkctx), csamplerates,
+			(*C.uint8_t)(unsafe.Pointer(&encctx.sample_rate)), 4, C.AV_OPT_SEARCH_CHILDREN); averr < 0 {
+			return nil, av_err("av_opt_set_bin", averr)
+		}
+
+		outputs.name = C.av_strdup(cin)
+		outputs.filter_ctx = buffersrcctx
+		outputs.pad_idx = 0
+		outputs.next = nil
+		inputs.name = C.av_strdup(cout)
+		inputs.filter_ctx = buffersinkctx
+		inputs.pad_idx = 0
+		inputs.next = nil
+
+		// this can actually be anull, but we leave it here as it's a nice demonstration of a filter.
+		// TODO: is there any performance benefit?
+		filterdesc := fmt.Sprintf(
+			"aformat=sample_rates=%d:sample_fmts=%s:channel_layouts=0x%016x",
+			encctx.sample_rate, C.GoString(C.av_get_sample_fmt_name(encctx.sample_fmt)),
+			encctx.channel_layout)
+
+		cfilterdesc := C.CString(filterdesc)
+		defer C.free(unsafe.Pointer(cfilterdesc))
+
+		if averr := C.avfilter_graph_parse_ptr(filtergraph, cfilterdesc, &inputs, &outputs, nil); averr < 0 {
+			return nil, av_err("avfilter_graph_parse_ptr", averr)
+		}
+		if averr := C.avfilter_graph_config(filtergraph, nil); averr < 0 {
+			return nil, av_err("avfilter_graph_config", averr)
+		}
+
+		C.av_buffersink_set_frame_size(buffersinkctx, C.uint(encctx.frame_size))
 	}
 
 	return &FilterContext{
-		buffersrcctx: buffersrcctx,
-		frame:        NewAVFrame(),
+		buffersrcctx:  buffersrcctx,
+		buffersinkctx: buffersinkctx,
+		filtergraph:   filtergraph,
+		frame:         NewAVFrame(),
 	}, nil
 }
 
 func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
-	if res := C.av_buffersrc_add_frame_flags(c.buffersrcctx, f.frame, C.AV_BUFFERSRC_FLAG_KEEP_REF); res < 0 {
+	log.Printf("-> %d", f.frame.pts)
+	if res := C.av_buffersrc_write_frame(c.buffersrcctx, f.frame); res < 0 {
 		return av_err("avcodec_send_frame", res)
 	}
 
 	for {
-		if res := C.av_buffersink_get_frame(c.buffersinkctx, c.frame.frame); res < 0 {
+		if res := C.av_buffersink_get_frame(c.buffersinkctx, f.frame); res < 0 {
 			if res == AVERROR(C.EAGAIN) {
 				return nil
 			}
 			return av_err("failed to receive frame", res)
 		}
 
+	log.Printf("<- %d", f.frame.pts)
+
 		if sink := c.Sink; sink != nil {
-			if err := sink.WriteAVFrame(c.frame); err != nil {
+			if err := sink.WriteAVFrame(f); err != nil {
 				return err
 			}
 		}
-		C.av_frame_unref(c.frame.frame)
+		C.av_frame_unref(f.frame)
 	}
 }
 
@@ -130,8 +236,8 @@ func (c *FilterContext) Close() error {
 		}
 	}
 
-	// close the packet
-	if err := c.packet.Close(); err != nil {
+	// close the frame
+	if err := c.frame.Close(); err != nil {
 		return err
 	}
 
