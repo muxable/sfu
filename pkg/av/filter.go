@@ -76,6 +76,8 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 			decctx.time_base.num, decctx.time_base.den,
 			decctx.sample_aspect_ratio.num, decctx.sample_aspect_ratio.den)
 
+		log.Printf("%v", decdesc)
+
 		cdecdesc := C.CString(decdesc)
 		defer C.free(unsafe.Pointer(cdecdesc))
 
@@ -102,11 +104,10 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 		inputs.pad_idx = 0
 		inputs.next = nil
 
-		filterdesc := "null"
-		// fmt.Sprintf(
-		// 	"minterpolate=fps=%d/%d:mi_mode=mci,format=pix_fmts=%s,scale=w=%d:h=%d",
-		// 	encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
-		// 	encctx.width, encctx.height)
+		filterdesc := fmt.Sprintf(
+			"fps=%d/%d,format=pix_fmts=%s,scale=w=%d:h=%d",
+			encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
+			encctx.width, encctx.height)
 
 		cfilterdesc := C.CString(filterdesc)
 		defer C.free(unsafe.Pointer(cfilterdesc))
@@ -199,8 +200,7 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 }
 
 func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
-	log.Printf("-> %d", f.frame.pts)
-	if res := C.av_buffersrc_write_frame(c.buffersrcctx, f.frame); res < 0 {
+	if res := C.av_buffersrc_add_frame(c.buffersrcctx, f.frame); res < 0 {
 		return av_err("avcodec_send_frame", res)
 	}
 
@@ -211,8 +211,8 @@ func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
 			}
 			return av_err("failed to receive frame", res)
 		}
-
-	log.Printf("<- %d", f.frame.pts)
+		
+		f.frame.pts = f.frame.best_effort_timestamp
 
 		if sink := c.Sink; sink != nil {
 			if err := sink.WriteAVFrame(f); err != nil {

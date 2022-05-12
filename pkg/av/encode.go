@@ -36,6 +36,8 @@ type EncoderConfiguration struct {
 	SampleAspectRatioDenominator uint32
 	FrameRateNumerator           uint32
 	FrameRateDenominator         uint32
+	TimeBaseNumerator			uint32
+	TimeBaseDenominator			uint32
 }
 
 func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
@@ -89,9 +91,8 @@ func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 		encoderctx.width = C.int(config.Width)
 		encoderctx.sample_aspect_ratio = C.AVRational{C.int(config.SampleAspectRatioNumerator), C.int(config.SampleAspectRatioDenominator)}
 		encoderctx.pix_fmt = C.AV_PIX_FMT_YUV420P
-		// this is correct, the fraction is inverted.
-		// encoderctx.framerate = C.AVRational{C.int(config.FrameRateNumerator), C.int(config.FrameRateDenominator)}
-		encoderctx.time_base = C.AVRational{C.int(config.FrameRateDenominator), C.int(config.FrameRateNumerator)}
+		encoderctx.framerate = C.AVRational{C.int(config.FrameRateNumerator), C.int(config.FrameRateDenominator)}
+		encoderctx.time_base = C.AVRational{C.int(config.TimeBaseNumerator), C.int(config.TimeBaseDenominator)}
 
 		encoderctx.max_b_frames = 0
 		if config.Bitrate > 0 {

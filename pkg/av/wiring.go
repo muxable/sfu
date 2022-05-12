@@ -82,6 +82,8 @@ func (c *DecodeContext) NewEncoder(configuration *EncoderConfiguration) (*Encode
 		configuration.FrameRateNumerator = uint32(c.decoderctx.framerate.num)
 		configuration.FrameRateDenominator = uint32(c.decoderctx.framerate.den)
 	}
+	configuration.TimeBaseNumerator = uint32(c.decoderctx.time_base.num)
+	configuration.TimeBaseDenominator = uint32(c.decoderctx.time_base.den)
 
 	enc, err := NewEncoder(configuration)
 	if err != nil {
@@ -89,18 +91,13 @@ func (c *DecodeContext) NewEncoder(configuration *EncoderConfiguration) (*Encode
 	}
 
 	// check if we need to resample.
-	switch c.RTPCodecType {
-	case webrtc.RTPCodecTypeAudio:
-		filter, err := NewFilter(c, enc)
-		if err != nil {
-			return nil, err
-		}
-
-		c.Sink = filter
-		filter.Sink = enc
-	case webrtc.RTPCodecTypeVideo:
-		c.Sink = enc
+	filter, err := NewFilter(c, enc)
+	if err != nil {
+		return nil, err
 	}
+
+	c.Sink = filter
+	filter.Sink = enc
 
 	return enc, nil
 }
