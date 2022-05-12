@@ -67,47 +67,26 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 			zap.L().Error("failed to create demuxer", zap.Error(err))
 			return
 		}
-		streams := demux.Streams()
-		decoders := make([]*av.DecodeContext, len(streams))
-		converters := make([]*av.ResampleContext, len(streams))
-		encoders := make([]*av.EncodeContext, len(streams))
-		parameters := make([]*av.AVCodecParameters, len(streams))
-		for i, stream := range demux.Streams() {
-			decoder, err := av.NewDecoder(demux, stream)
-			if err != nil {
-				zap.L().Error("failed to create decoder", zap.Error(err))
-				return
-			}
-			switch stream.AVMediaType() {
-			case av.AVMediaTypeVideo:
-				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: h.videoCodec})
-				if err != nil {
-					zap.L().Error("failed to create encoder", zap.Error(err))
-					return
-				}
-				decoders[i] = decoder
-				encoders[i] = encoder
-				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
-			case av.AVMediaTypeAudio:
-				encoder, err := av.NewEncoder(decoder, &av.EncoderConfiguration{Codec: h.audioCodec})
-				if err != nil {
-					zap.L().Error("failed to create encoder", zap.Error(err))
-					return
-				}
-				resampler, err := av.NewResampler(decoder, encoder)
-				if err != nil {
-					zap.L().Error("failed to create resampler", zap.Error(err))
-					return
-				}
-				decoders[i] = decoder
-				converters[i] = resampler
-				encoders[i] = encoder
-				parameters[i] = av.NewAVCodecParametersFromEncoder(encoder)
-			default:
-				zap.L().Error("unsupported media type", zap.Int("media_type", int(stream.AVMediaType())))
-			}
+		decoders, err := demux.NewDecoders()
+		if err != nil {
+			zap.L().Error("failed to create decoders", zap.Error(err))
+			return
 		}
-		mux, err := av.NewRTPMuxer(parameters)
+		configs, err := decoders.MapEncoderConfigurations(&av.EncoderConfiguration{
+			Codec: h.audioCodec,
+		}, &av.EncoderConfiguration{
+			Codec: h.videoCodec,
+		})
+		if err != nil {
+			zap.L().Error("failed to create encoder configurations", zap.Error(err))
+			return
+		}
+		encoders, err := decoders.NewEncoders(configs)
+		if err != nil {
+			zap.L().Error("failed to create encoders", zap.Error(err))
+			return
+		}
+		mux, err := encoders.NewRTPMuxer()
 		if err != nil {
 			zap.L().Error("failed to create muxer", zap.Error(err))
 			return
@@ -122,21 +101,7 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 			zap.L().Error("failed to create sink", zap.Error(err))
 			return
 		}
-
-		// wire them together
-		for i := 0; i < len(streams); i++ {
-			demux.Sinks = append(demux.Sinks, &av.IndexedSink{AVPacketWriteCloser: decoders[i], Index: 0})
-			if resampler := converters[i]; resampler != nil {
-				decoders[i].Sink = resampler
-				resampler.Sink = encoders[i]
-			} else {
-				decoders[i].Sink = encoders[i]
-			}
-			encoders[i].Sink = &av.IndexedSink{AVPacketWriteCloser: mux, Index: i}
-		}
 		mux.Sink = trackSink
-
-		// TODO: validate the construction
 
 		// start the pipeline
 		if err := demux.Run(); err != nil {

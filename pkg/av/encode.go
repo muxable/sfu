@@ -24,13 +24,23 @@ type EncodeContext struct {
 }
 
 type EncoderConfiguration struct {
-	Name           string // if unset, encoder will resolve by output type.
-	InitialBitrate int64
-	Codec          webrtc.RTPCodecCapability
-	Options        map[string]interface{}
+	Name    string // if unset, encoder will resolve by output type.
+	Bitrate int64
+	Codec   webrtc.RTPCodecCapability
+	Options map[string]interface{}
+
+	// video parameters
+	Width                        uint32
+	Height                       uint32
+	SampleAspectRatioNumerator   uint32
+	SampleAspectRatioDenominator uint32
+	FrameRateNumerator           uint32
+	FrameRateDenominator         uint32
+	TimeBaseNumerator			uint32
+	TimeBaseDenominator			uint32
 }
 
-func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeContext, error) {
+func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 	var encodercodec *C.AVCodec
 	if config.Name == "" {
 		encodercodec = C.avcodec_find_encoder(AvCodec[config.Codec.MimeType])
@@ -70,22 +80,23 @@ func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeCo
 		encoderctx.sample_fmt = C.AV_SAMPLE_FMT_S16
 		encoderctx.time_base = C.AVRational{1, C.int(config.Codec.ClockRate)}
 
-		if config.InitialBitrate > 0 {
-			encoderctx.bit_rate = C.int64_t(config.InitialBitrate)
+		if config.Bitrate > 0 {
+			encoderctx.bit_rate = C.int64_t(config.Bitrate)
 		} else {
 			encoderctx.bit_rate = 96 * 1000
 		}
 	}
 	if strings.HasPrefix(config.Codec.MimeType, "video/") {
-		encoderctx.height = decoder.decoderctx.height
-		encoderctx.width = decoder.decoderctx.width
-		encoderctx.sample_aspect_ratio = decoder.decoderctx.sample_aspect_ratio
+		encoderctx.height = C.int(config.Height)
+		encoderctx.width = C.int(config.Width)
+		encoderctx.sample_aspect_ratio = C.AVRational{C.int(config.SampleAspectRatioNumerator), C.int(config.SampleAspectRatioDenominator)}
 		encoderctx.pix_fmt = C.AV_PIX_FMT_YUV420P
-		encoderctx.time_base = C.av_inv_q(decoder.decoderctx.framerate)
+		encoderctx.framerate = C.AVRational{C.int(config.FrameRateNumerator), C.int(config.FrameRateDenominator)}
+		encoderctx.time_base = C.AVRational{C.int(config.TimeBaseNumerator), C.int(config.TimeBaseDenominator)}
 
 		encoderctx.max_b_frames = 0
-		if config.InitialBitrate > 0 {
-			encoderctx.bit_rate = C.int64_t(config.InitialBitrate)
+		if config.Bitrate > 0 {
+			encoderctx.bit_rate = C.int64_t(config.Bitrate)
 		} else {
 			encoderctx.bit_rate = 20 * 1000 * 1000
 		}
@@ -95,13 +106,13 @@ func NewEncoder(decoder *DecodeContext, config *EncoderConfiguration) (*EncodeCo
 		for k, v := range config.Options {
 			ckey := C.CString(k)
 			defer C.free(unsafe.Pointer(ckey))
-			switch v.(type) {
+			switch v := v.(type) {
 			case int:
-				if averr := C.av_dict_set_int(&opts, ckey, C.int64_t(v.(int)), 0); averr < 0 {
+				if averr := C.av_dict_set_int(&opts, ckey, C.int64_t(v), 0); averr < 0 {
 					return nil, av_err("failed to set option", averr)
 				}
 			case string:
-				cval := C.CString(v.(string))
+				cval := C.CString(v)
 				defer C.free(unsafe.Pointer(cval))
 				if averr := C.av_dict_set(&opts, ckey, cval, 0); averr < 0 {
 					return nil, av_err("failed to set option", averr)
