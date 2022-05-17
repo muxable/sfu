@@ -98,10 +98,10 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 	// zap.L().Debug("received packet", zap.Uint16("seq", p.SequenceNumber), zap.Uint32("timestamp", p.Timestamp), zap.Uint16("evict", b.evict), zap.Uint16("count", b.count), zap.Uint64("absTimestamp", b.absTimestamp))
 
 	// add it to the buffer
-	if b.buffer[p.SequenceNumber] != nil {
+	if q := b.buffer[p.SequenceNumber]; q != nil && !q.Evicted {
 		// duplicate packet, but warn if timestamps are different
-		if b.buffer[p.SequenceNumber].Timestamp != p.Timestamp {
-			zap.L().Warn("duplicate packet with different timestamps", zap.Uint16("seq", p.SequenceNumber), zap.Uint32("ts", p.Timestamp), zap.Uint32("prev", b.buffer[p.SequenceNumber].Timestamp))
+		if q.Timestamp != p.Timestamp {
+			zap.L().Warn("duplicate packet with different timestamps", zap.Uint16("seq", p.SequenceNumber), zap.Uint32("ts", p.Timestamp), zap.Uint32("prev", q.Timestamp))
 		}
 		return nil
 	}
