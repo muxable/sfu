@@ -3,6 +3,7 @@ package av
 var DefaultH264EncoderOptions = map[string]interface{} {
 	"preset": "ultrafast",
 	"profile": "baseline",
+	"x264opts": "bframes=0:force-cfr=1:mbtree=0:sync-lookahead=0:rc-lookahead=0",
 }
 
 var DefaultVP8EncoderOptions = map[string]interface{} {
@@ -17,4 +18,8 @@ var DefaultVP9EncoderOptions = map[string]interface{} {
 	"crf": 20,
 }
 
-var DefaultOpusEncoderOptions = map[string]interface{} {}
+var DefaultOpusEncoderOptions = map[string]interface{} {
+	"fec": 1,
+	"packet_loss": 10,
+	"vbr": "constrained",
+}

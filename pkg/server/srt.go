@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -129,7 +128,6 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 		demuxers := make([]*av.DemuxContext, 0)
 		parameters := make([]*av.AVCodecParameters, 0)
 		for i, track := range node.Get(items["r"]) {
-			log.Printf("got track %v", track)
 			pt := webrtc.PayloadType(96 + i)
 			r, w := rtpio.RTPPipe()
 			listeners = append(listeners, track.AddListener(pt, w))

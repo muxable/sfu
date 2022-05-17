@@ -97,9 +97,9 @@ func NewTrackSink(params []*webrtc.RTPCodecParameters, sid string, th TrackHandl
 }
 
 func (s *TrackSink) WriteRTP(p *rtp.Packet) error {
-	track, ok := s.tracks[p.PayloadType]
-	if !ok {
-		return fmt.Errorf("no track for payload type %d", p.PayloadType)
+	track := s.tracks[p.PayloadType]
+	if track == nil {
+		return fmt.Errorf("no track for payload type %d: %v", p.PayloadType, s.tracks)
 	}
 	if err := track.WriteRTP(p); err != nil {
 		return err

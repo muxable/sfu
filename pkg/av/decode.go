@@ -19,8 +19,10 @@ type AVFormatContext interface {
 type DecodeContext struct {
 	Sink       AVFrameWriteCloser
 	decoderctx *C.AVCodecContext
-	frame      *AVFrame
 	webrtc.RTPCodecType
+	packetCh chan *AVPacket
+	err      error
+	doneCh   chan bool
 }
 
 func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
@@ -58,63 +60,72 @@ func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, erro
 		codecType = webrtc.RTPCodecType(webrtc.RTPCodecTypeVideo)
 	}
 
-	return &DecodeContext{
-		frame:        NewAVFrame(),
+	c := &DecodeContext{
 		decoderctx:   decoderctx,
 		RTPCodecType: codecType,
-	}, nil
+		packetCh:     make(chan *AVPacket, 10),
+		doneCh:       make(chan bool),
+	}
+	go c.drainLoop()
+	return c, nil
+}
+
+func (c *DecodeContext) drainLoop() {
+	defer func() {
+		// close the sink
+		if sink := c.Sink; sink != nil {
+			if err := sink.Close(); err != nil {
+				c.err = err
+			}
+		}
+
+		// free the context
+		C.avcodec_free_context(&c.decoderctx)
+
+		c.doneCh <- true
+	}()
+	for p := range c.packetCh {
+		C.av_packet_rescale_ts(p.packet, p.timebase, c.decoderctx.time_base)
+		p.timebase = c.decoderctx.time_base
+
+		if averr := C.avcodec_send_packet(c.decoderctx, p.packet); averr < 0 {
+			c.err = av_err("avcodec_send_packet", averr)
+			return
+		}
+
+		for {
+			f := NewAVFrame()
+			if res := C.avcodec_receive_frame(c.decoderctx, f.frame); res < 0 {
+				if res == AVERROR(C.EAGAIN) {
+					break
+				}
+				c.err = av_err("failed to receive frame", res)
+				return
+			}
+
+			if f.frame.pts == C.AV_NOPTS_VALUE {
+				continue
+			}
+
+			f.frame.pts = f.frame.best_effort_timestamp
+
+			if sink := c.Sink; sink != nil {
+				if err := sink.WriteAVFrame(f); err != nil {
+					c.err = err
+					return
+				}
+			}
+		}
+	}
 }
 
 func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
-	C.av_packet_rescale_ts(p.packet, p.timebase, c.decoderctx.time_base)
-	p.timebase = c.decoderctx.time_base
-
-	if averr := C.avcodec_send_packet(c.decoderctx, p.packet); averr < 0 {
-		return av_err("avcodec_send_packet", averr)
-	}
-
-	for {
-		if res := C.avcodec_receive_frame(c.decoderctx, c.frame.frame); res < 0 {
-			if res == AVERROR(C.EAGAIN) {
-				return nil
-			}
-			return av_err("failed to receive frame", res)
-		}
-
-		if c.frame.frame.pts == C.AV_NOPTS_VALUE {
-			continue
-		}
-
-		c.frame.frame.pts = c.frame.frame.best_effort_timestamp
-
-		if sink := c.Sink; sink != nil {
-			if err := sink.WriteAVFrame(c.frame); err != nil {
-				return err
-			}
-		}
-	}
+	c.packetCh <- p
+	return c.err
 }
 
 func (c *DecodeContext) Close() error {
-	// drain the context
-	// if err := c.WriteAVPacket(&AVPacket{}); err != nil && err != io.EOF {
-	// 	return err
-	// }
-
-	// close the sink
-	if sink := c.Sink; sink != nil {
-		if err := sink.Close(); err != nil {
-			return err
-		}
-	}
-
-	// close the frame
-	if err := c.frame.Close(); err != nil {
-		return err
-	}
-
-	// free the context
-	C.avcodec_free_context(&c.decoderctx)
-
-	return nil
+	c.packetCh <- &AVPacket{}
+	<-c.doneCh
+	return c.err
 }

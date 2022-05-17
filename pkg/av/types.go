@@ -7,7 +7,9 @@ package av
 #include <libavutil/log.h>
 */
 import "C"
-import "runtime"
+import (
+	"runtime"
+)
 
 func init() {
 	C.av_log_set_level(32)
@@ -21,16 +23,11 @@ type AVPacket struct {
 }
 
 func NewAVPacket() *AVPacket {
-	packet := C.av_packet_alloc()
-	if packet == nil {
-		return nil
-	}
-	return &AVPacket{packet: packet}
-}
-
-func (p *AVPacket) Close() error {
-	C.av_packet_free(&p.packet)
-	return nil
+	avpacket := &AVPacket{packet: C.av_packet_alloc()}
+	runtime.SetFinalizer(avpacket, func(avpacket *AVPacket) {
+		C.av_packet_free(&avpacket.packet)
+	})
+	return avpacket
 }
 
 type AVFrame struct {
@@ -38,16 +35,11 @@ type AVFrame struct {
 }
 
 func NewAVFrame() *AVFrame {
-	frame := C.av_frame_alloc()
-	if frame == nil {
-		return nil
-	}
-	return &AVFrame{frame: frame}
-}
-
-func (f *AVFrame) Close() error {
-	C.av_frame_free(&f.frame)
-	return nil
+	avframe := &AVFrame{frame: C.av_frame_alloc()}
+	runtime.SetFinalizer(avframe, func(avframe *AVFrame) {
+		C.av_frame_free(&avframe.frame)
+	})
+	return avframe
 }
 
 type AVMediaType int

@@ -5,6 +5,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
+	"go.uber.org/zap"
 )
 
 type Binding struct {
@@ -41,11 +42,11 @@ func (t *CDNTrackLocalStaticRTP) WriteRTP(p *rtp.Packet) error {
 			p.PayloadType = uint8(binding.PayloadType)
 		}
 		if err := binding.WriteRTP(p); err != nil {
-			// zap.L().Error("failed to write RTP packet", zap.Error(err))
+			zap.L().Error("failed to write RTP packet", zap.Error(err))
 		}
 	}
 	if err := t.TrackLocalStaticRTP.WriteRTP(p); err != nil {
-		// zap.L().Error("failed to write RTP packet", zap.Error(err))
+		zap.L().Error("failed to write RTP packet", zap.Error(err))
 	}
 	return nil
 }

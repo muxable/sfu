@@ -173,7 +173,7 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 		s.Lock()
 
 		if s.counts[key] == 0 {
-			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 5*time.Second)
+			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 1*time.Second)
 
 			go rtpio.CopyRTP(buffer, &trackWrapper{tr})
 

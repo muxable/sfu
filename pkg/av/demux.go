@@ -22,7 +22,6 @@ type DemuxContext struct {
 	avformatctx *C.AVFormatContext
 	rtpin       rtpio.RTPReader
 	rawin       io.Reader
-	packet      *AVPacket
 }
 
 var (
@@ -73,7 +72,6 @@ func NewRTPDemuxer(codec webrtc.RTPCodecParameters, in rtpio.RTPReader) (*DemuxC
 	c := &DemuxContext{
 		avformatctx: avformatctx,
 		rtpin:       in,
-		packet:      NewAVPacket(),
 	}
 
 	avioctx := C.avio_alloc_context((*C.uchar)(buf), 1500, 1, pointer.Save(c), (*[0]byte)(C.cgoReadBufferFunc), (*[0]byte)(C.cgoWriteRTCPPacketFunc), nil)
@@ -113,7 +111,6 @@ func NewRawDemuxer(in io.Reader) (*DemuxContext, error) {
 	c := &DemuxContext{
 		avformatctx: avformatctx,
 		rawin:       in,
-		packet:      NewAVPacket(),
 	}
 
 	avioctx := C.avio_alloc_context((*C.uchar)(buf), 4096, 0, pointer.Save(c), (*[0]byte)(C.cgoReadBufferFunc), nil, nil)
@@ -196,17 +193,21 @@ func (c *DemuxContext) Run() error {
 		return errors.New("number of streams does not match number of sinks")
 	}
 	for {
-		if averr := C.av_read_frame(c.avformatctx, c.packet.packet); averr < 0 {
+		p := NewAVPacket()
+		if averr := C.av_read_frame(c.avformatctx, p.packet); averr < 0 {
 			return av_err("av_read_frame", averr)
 		}
-		if sink := c.Sinks[c.packet.packet.stream_index]; sink != nil {
-			c.packet.packet.stream_index = C.int(sink.Index)
-			c.packet.timebase = streams[sink.Index].stream.time_base
-			if err := sink.WriteAVPacket(c.packet); err != nil {
+		streamidx := p.packet.stream_index
+		if sink := c.Sinks[streamidx]; sink != nil {
+			p.timebase = streams[streamidx].stream.time_base
+			p.packet.stream_index = C.int(sink.Index)
+			if p.packet.stream_index == 1 {
+				continue
+			}
+			if err := sink.WriteAVPacket(p); err != nil {
 				return err
 			}
 		}
-		C.av_packet_unref(c.packet.packet)
 	}
 }
 
@@ -216,11 +217,6 @@ func (c *DemuxContext) Close() error {
 		if err := sink.Close(); err != nil {
 			return err
 		}
-	}
-
-	// close the packet
-	if err := c.packet.Close(); err != nil {
-		return err
 	}
 
 	// free the context

@@ -20,7 +20,6 @@ type FilterContext struct {
 	buffersrcctx  *C.AVFilterContext
 	buffersinkctx *C.AVFilterContext
 	filtergraph   *C.AVFilterGraph
-	frame         *AVFrame
 	Sink          AVFrameWriteCloser
 }
 
@@ -104,10 +103,11 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 		inputs.pad_idx = 0
 		inputs.next = nil
 
-		filterdesc := fmt.Sprintf(
-			"fps=%d/%d,format=pix_fmts=%s,scale=w=%d:h=%d",
-			encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
-			encctx.width, encctx.height)
+		filterdesc := "null"
+		// fmt.Sprintf(
+		// 	"fps=%d/%d,format=pix_fmts=%s,scale=w=%d:h=%d",
+		// 	encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
+		// 	encctx.width, encctx.height)
 
 		cfilterdesc := C.CString(filterdesc)
 		defer C.free(unsafe.Pointer(cfilterdesc))
@@ -173,10 +173,11 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 
 		// this can actually be anull, but we leave it here as it's a nice demonstration of a filter.
 		// TODO: is there any performance benefit?
-		filterdesc := fmt.Sprintf(
-			"aformat=sample_rates=%d:sample_fmts=%s:channel_layouts=0x%016x",
-			encctx.sample_rate, C.GoString(C.av_get_sample_fmt_name(encctx.sample_fmt)),
-			encctx.channel_layout)
+		filterdesc := "anull"
+		// fmt.Sprintf(
+		// 	"aformat=sample_rates=%d:sample_fmts=%s:channel_layouts=0x%016x",
+		// 	encctx.sample_rate, C.GoString(C.av_get_sample_fmt_name(encctx.sample_fmt)),
+		// 	encctx.channel_layout)
 
 		cfilterdesc := C.CString(filterdesc)
 		defer C.free(unsafe.Pointer(cfilterdesc))
@@ -195,7 +196,6 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 		buffersrcctx:  buffersrcctx,
 		buffersinkctx: buffersinkctx,
 		filtergraph:   filtergraph,
-		frame:         NewAVFrame(),
 	}, nil
 }
 
@@ -205,21 +205,21 @@ func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
 	}
 
 	for {
-		if res := C.av_buffersink_get_frame(c.buffersinkctx, f.frame); res < 0 {
+		g := NewAVFrame()
+		if res := C.av_buffersink_get_frame(c.buffersinkctx, g.frame); res < 0 {
 			if res == AVERROR(C.EAGAIN) {
 				return nil
 			}
 			return av_err("failed to receive frame", res)
 		}
-		
-		f.frame.pts = f.frame.best_effort_timestamp
+
+		g.frame.pts = g.frame.best_effort_timestamp
 
 		if sink := c.Sink; sink != nil {
-			if err := sink.WriteAVFrame(f); err != nil {
+			if err := sink.WriteAVFrame(g); err != nil {
 				return err
 			}
 		}
-		C.av_frame_unref(f.frame)
 	}
 }
 
@@ -234,11 +234,6 @@ func (c *FilterContext) Close() error {
 		if err := sink.Close(); err != nil {
 			return err
 		}
-	}
-
-	// close the frame
-	if err := c.frame.Close(); err != nil {
-		return err
 	}
 
 	// free the context

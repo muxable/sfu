@@ -129,11 +129,6 @@ func (c *ResampleContext) Close() error {
 		}
 	}
 
-	// close the frame
-	if err := c.frame.Close(); err != nil {
-		return err
-	}
-
 	// free the temp buffer
 	C.av_freep(unsafe.Pointer(&c.buffer))
 

@@ -18,9 +18,11 @@ import (
 
 type EncodeContext struct {
 	encoderctx      *C.AVCodecContext
-	packet          *AVPacket
 	Sink            *IndexedSink
 	requestKeyframe bool
+	frameCh         chan *AVFrame
+	err             error
+	doneCh          chan bool
 }
 
 type EncoderConfiguration struct {
@@ -36,8 +38,8 @@ type EncoderConfiguration struct {
 	SampleAspectRatioDenominator uint32
 	FrameRateNumerator           uint32
 	FrameRateDenominator         uint32
-	TimeBaseNumerator			uint32
-	TimeBaseDenominator			uint32
+	TimeBaseNumerator            uint32
+	TimeBaseDenominator          uint32
 }
 
 func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
@@ -54,6 +56,8 @@ func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 				config.Options = DefaultVP8EncoderOptions
 			case webrtc.MimeTypeVP9:
 				config.Options = DefaultVP9EncoderOptions
+			case webrtc.MimeTypeOpus:
+				config.Options = DefaultOpusEncoderOptions
 			}
 		}
 	} else {
@@ -102,6 +106,8 @@ func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 		}
 	}
 
+	encoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY
+
 	if config.Options != nil {
 		for k, v := range config.Options {
 			ckey := C.CString(k)
@@ -125,10 +131,14 @@ func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 		return nil, av_err("avcodec_open2", averr)
 	}
 
-	return &EncodeContext{
-		packet:     NewAVPacket(),
+	c := &EncodeContext{
 		encoderctx: encoderctx,
-	}, nil
+		frameCh:    make(chan *AVFrame, 30),
+		doneCh:     make(chan bool),
+	}
+
+	go c.drainLoop()
+	return c, nil
 }
 
 func (c *EncodeContext) RequestKeyframe() {
@@ -139,60 +149,66 @@ func (c *EncodeContext) SetBitrate(bitrate int64) {
 	c.encoderctx.bit_rate = C.int64_t(bitrate)
 }
 
-func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
-	// erase the picture types so the encoder can set them
-	if f.frame != nil {
-		if c.requestKeyframe {
-			f.frame.pict_type = C.AV_PICTURE_TYPE_I
-			c.requestKeyframe = false
-		} else {
-			f.frame.pict_type = C.AV_PICTURE_TYPE_NONE
-		}
-	}
-
-	if res := C.avcodec_send_frame(c.encoderctx, f.frame); res < 0 {
-		return av_err("avcodec_send_frame", res)
-	}
-
-	for {
-		C.av_new_packet(c.packet.packet, c.packet.packet.size)
-		if res := C.avcodec_receive_packet(c.encoderctx, c.packet.packet); res < 0 {
-			if res == AVERROR(C.EAGAIN) {
-				return nil
-			}
-			return av_err("failed to receive frame", res)
-		}
-
+func (c *EncodeContext) drainLoop() {
+	defer func() {
+		// close the sink
 		if sink := c.Sink; sink != nil {
-			c.packet.packet.stream_index = C.int(sink.Index)
-			c.packet.timebase = c.encoderctx.time_base
-			if err := sink.WriteAVPacket(c.packet); err != nil {
-				return err
+			if err := sink.Close(); err != nil {
+				c.err = err
+			}
+		}
+
+		// free the context
+		C.avcodec_free_context(&c.encoderctx)
+
+		c.doneCh <- true
+	}()
+	for f := range c.frameCh {
+		// erase the picture types so the encoder can set them
+		if f.frame != nil {
+			if c.requestKeyframe {
+				f.frame.pict_type = C.AV_PICTURE_TYPE_I
+				c.requestKeyframe = false
+			} else {
+				f.frame.pict_type = C.AV_PICTURE_TYPE_NONE
+			}
+		}
+
+		if res := C.avcodec_send_frame(c.encoderctx, f.frame); res < 0 {
+			c.err = av_err("avcodec_send_frame", res)
+			return
+		}
+
+		for {
+			p := NewAVPacket()
+			C.av_new_packet(p.packet, p.packet.size)
+			if res := C.avcodec_receive_packet(c.encoderctx, p.packet); res < 0 {
+				if res == AVERROR(C.EAGAIN) {
+					break
+				}
+				c.err = av_err("avcodec_receive_packet", res)
+				return
+			}
+
+			if sink := c.Sink; sink != nil {
+				p.packet.stream_index = C.int(sink.Index)
+				p.timebase = c.encoderctx.time_base
+				if err := sink.WriteAVPacket(p); err != nil {
+					c.err = err
+					return
+				}
 			}
 		}
 	}
 }
 
+func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
+	c.frameCh <- f
+	return c.err
+}
+
 func (c *EncodeContext) Close() error {
-	// drain the context
-	// if err := c.WriteAVFrame(&AVFrame{}); err != nil && err != io.EOF {
-	// 	return err
-	// }
-
-	// close the sink
-	if sink := c.Sink; sink != nil {
-		if err := sink.Close(); err != nil {
-			return err
-		}
-	}
-
-	// close the packet
-	if err := c.packet.Close(); err != nil {
-		return err
-	}
-
-	// free the context
-	C.avcodec_free_context(&c.encoderctx)
-
-	return nil
+	c.frameCh <- &AVFrame{}
+	<-c.doneCh
+	return c.err
 }
