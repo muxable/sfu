@@ -103,11 +103,10 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 		inputs.pad_idx = 0
 		inputs.next = nil
 
-		filterdesc := "null"
-		// fmt.Sprintf(
-		// 	"fps=%d/%d,format=pix_fmts=%s,scale=w=%d:h=%d",
-		// 	encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
-		// 	encctx.width, encctx.height)
+		filterdesc := fmt.Sprintf(
+			"fps=%d/%d,format=pix_fmts=%s,scale=w=%d:h=%d",
+			encctx.framerate.num, encctx.framerate.den, C.GoString(C.av_get_pix_fmt_name(encctx.pix_fmt)),
+			encctx.width, encctx.height)
 
 		cfilterdesc := C.CString(filterdesc)
 		defer C.free(unsafe.Pointer(cfilterdesc))
@@ -129,6 +128,9 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 			return nil, errors.New("failed to find buffersink filter")
 		}
 
+		if decctx.channel_layout == 0 {
+			decctx.channel_layout = C.ulong(C.av_get_default_channel_layout(decctx.channels))
+		}
 		decdesc := fmt.Sprintf(
 			"time_base=%d/%d:sample_rate=%d:sample_fmt=%s:channel_layout=0x%016x",
 			decctx.time_base.num, decctx.time_base.den, decctx.sample_rate,
@@ -173,11 +175,10 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 
 		// this can actually be anull, but we leave it here as it's a nice demonstration of a filter.
 		// TODO: is there any performance benefit?
-		filterdesc := "anull"
-		// fmt.Sprintf(
-		// 	"aformat=sample_rates=%d:sample_fmts=%s:channel_layouts=0x%016x",
-		// 	encctx.sample_rate, C.GoString(C.av_get_sample_fmt_name(encctx.sample_fmt)),
-		// 	encctx.channel_layout)
+		filterdesc := fmt.Sprintf(
+			"aformat=sample_rates=%d:sample_fmts=%s:channel_layouts=0x%016x",
+			encctx.sample_rate, C.GoString(C.av_get_sample_fmt_name(encctx.sample_fmt)),
+			encctx.channel_layout)
 
 		cfilterdesc := C.CString(filterdesc)
 		defer C.free(unsafe.Pointer(cfilterdesc))
