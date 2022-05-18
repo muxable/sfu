@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -11,7 +12,6 @@ import (
 	"github.com/muxable/sfu/api"
 	"github.com/muxable/sfu/internal/buffer"
 	av "github.com/muxable/sfu/pkg/av"
-	"github.com/muxable/sfu/pkg/ccnack"
 	"github.com/muxable/signal/pkg/signal"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
@@ -40,7 +40,8 @@ func RunWebRTCServer(addr string, trackHandler TrackHandler, videoCodec, audioCo
 		videoCodec:   videoCodec,
 		audioCodec:   audioCodec,
 		counts:       make(map[string]uint16),
-		buffers:      make(map[string]*buffer.ReorderBuffer),
+		buffers:      make(map[string]rtpio.RTPWriteCloser),
+		logs: 		  make(map[string]*buffer.ReceiveLog),
 		sources:      make(map[string]map[webrtc.SSRC]*webrtc.PeerConnection),
 	})
 	return srv.Serve(conn)
@@ -54,7 +55,8 @@ type SFUServer struct {
 	videoCodec, audioCodec webrtc.RTPCodecCapability
 
 	counts  map[string]uint16
-	buffers map[string]*buffer.ReorderBuffer
+	buffers map[string]rtpio.RTPWriteCloser
+	logs map[string]*buffer.ReceiveLog
 	sources map[string]map[webrtc.SSRC]*webrtc.PeerConnection
 }
 
@@ -104,6 +106,10 @@ func (s *SFUServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID stri
 }
 
 func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
+	e := webrtc.SettingEngine{}
+
+	e.DisableSRTPReplayProtection(true)
+
 	m := &webrtc.MediaEngine{}
 
 	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"ccnack", ""}}
@@ -142,24 +148,24 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 	}
 
 	// configure ccnack
-	generator, err := ccnack.NewGeneratorInterceptor()
-	if err != nil {
-		return err
-	}
+	// generator, err := ccnack.NewGeneratorInterceptor()
+	// if err != nil {
+	// 	return err
+	// }
 
-	responder, err := ccnack.NewResponderInterceptor()
-	if err != nil {
-		return err
-	}
+	// responder, err := ccnack.NewResponderInterceptor()
+	// if err != nil {
+	// 	return err
+	// }
 
-	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
-	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
-	i.Add(responder)
-	i.Add(generator)
+	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
+	// m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+	// i.Add(responder)
+	// i.Add(generator)
 
 	log.Printf("creating peer connection")
 
-	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
+	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(e)).NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
 	})
 	if err != nil {
@@ -173,26 +179,41 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 		s.Lock()
 
 		if s.counts[key] == 0 {
-			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 1*time.Second)
+			// buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 1*time.Second)
+			r, w := rtpio.RTPPipe()
 
-			go rtpio.CopyRTP(buffer, &trackWrapper{tr})
+			s.logs[key] = buffer.NewReceiveLog(512)
 
 			go func() {
-				transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), buffer)
-				if err != nil {
-					zap.L().Error("failed to create transcoder", zap.Error(err))
-					s.Unlock()
-					return
-				}
+				for {
+					log.Printf("running transcoder")
+					// keep running the transcoder as long as the buffer is alive.
+					transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), r)
+					if err != nil {
+						zap.L().Error("failed to create transcoder", zap.Error(err))
+						return
+					}
 
-				if err := transcoder.Run(); err != nil {
-					zap.L().Error("failed to run transcoder", zap.Error(err))
+					if err := transcoder.Run(); err != nil {
+						if err == io.EOF {
+							if err := transcoder.Close(); err != nil {
+								zap.L().Error("failed to close transcoder", zap.Error(err))
+							} else {
+								log.Printf("transcoder closed EOF")
+							}
+							break
+						}
+						zap.L().Error("failed to run transcoder", zap.Error(err))
+					}
 				}
 			}()
 
 			go func() {
-				for nack := range buffer.Nacks(100*time.Millisecond) {
+				timer := time.NewTicker(100 * time.Millisecond)
+				senderSSRC := rand.Uint32()
+				for range timer.C {
 					s.Lock()
+					receiveLog := s.logs[key]
 					sources := s.sources[key]
 					if len(sources) == 0 {
 						zap.L().Warn("no sources for nack", zap.String("key", key))
@@ -206,7 +227,21 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 						ssrcs = append(ssrcs, ssrc)
 					}
 					ssrc := ssrcs[rand.Intn(len(ssrcs))]
-					nack.MediaSSRC = uint32(ssrc)
+
+					missing := receiveLog.MissingSeqNumbers(0)
+					if len(missing) == 0 {
+						s.Unlock()
+						continue
+					}
+
+					nack := &rtcp.TransportLayerNack{
+						SenderSSRC: senderSSRC,
+						MediaSSRC:  uint32(ssrc),
+						Nacks:      rtcp.NackPairsFromSequenceNumbers(missing),
+					}
+
+					log.Printf("writing nack %+v", nack)
+
 					if err := sources[ssrc].WriteRTCP([]rtcp.Packet{nack}); err != nil {
 						zap.L().Error("failed to write nack", zap.Error(err))
 					}
@@ -215,11 +250,21 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 				}
 			}()
 
-			s.buffers[key] = buffer
+			s.buffers[key] = w
 			s.sources[key] = make(map[webrtc.SSRC]*webrtc.PeerConnection)
-		} else {
-			go rtpio.CopyRTP(s.buffers[key], &trackWrapper{tr})
-		}
+		} 
+		// go rtpio.CopyRTP(s.buffers[key], &trackWrapper{tr})
+		go func() {
+			buffer := s.buffers[key]
+			for {
+				p, _, err := tr.ReadRTP()
+				if err != nil {
+					return
+				}
+				s.logs[key].Add(p.SequenceNumber)
+				go buffer.WriteRTP(p)  // this might block.
+			}
+		}()
 		s.counts[key]++
 		s.sources[key][tr.SSRC()] = pc
 

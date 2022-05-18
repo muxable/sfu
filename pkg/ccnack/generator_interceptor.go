@@ -8,6 +8,7 @@ import (
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"go.uber.org/zap"
 )
 
 // GeneratorInterceptorFactory is a interceptor.Factory for a GeneratorInterceptor
@@ -18,7 +19,7 @@ type GeneratorInterceptorFactory struct {
 // NewInterceptor constructs a new ReceiverInterceptor
 func (g *GeneratorInterceptorFactory) NewInterceptor(id string) (interceptor.Interceptor, error) {
 	i := &GeneratorInterceptor{
-		size:        512,
+		size:        32768,
 		skipLastN:   0,
 		interval:    time.Millisecond * 100,
 		receiveLogs: map[uint32]*receiveLog{},
@@ -148,7 +149,6 @@ func (n *GeneratorInterceptor) Close() error {
 func (n *GeneratorInterceptor) loop(rtcpWriter interceptor.RTCPWriter) {
 	defer n.wg.Done()
 
-
 	ticker := time.NewTicker(n.interval)
 	defer ticker.Stop()
 	for {
@@ -164,16 +164,16 @@ func (n *GeneratorInterceptor) loop(rtcpWriter interceptor.RTCPWriter) {
 						continue
 					}
 
+					log.Printf("missing: %v", missing)
+
 					nack := &rtcp.TransportLayerNack{
 						MediaSSRC:  ssrc,
 						Nacks:      rtcp.NackPairsFromSequenceNumbers(missing),
 					}
 
-					log.Printf("ignoring nack %v", nack)
-
-					// if _, err := rtcpWriter.Write([]rtcp.Packet{nack}, interceptor.Attributes{}); err != nil {
-					// 	zap.L().Error("failed to write rtcp packet", zap.Error(err))
-					// }
+					if _, err := rtcpWriter.Write([]rtcp.Packet{nack}, interceptor.Attributes{}); err != nil {
+						zap.L().Error("failed to write rtcp packet", zap.Error(err))
+					}
 				}
 			}()
 		case <-n.close:

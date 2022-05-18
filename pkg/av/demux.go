@@ -48,7 +48,7 @@ func NewRTPDemuxer(codec webrtc.RTPCodecParameters, in rtpio.RTPReader) (*DemuxC
 	if averr := C.av_dict_set(&opts, csdpflags, ccustomio, 0); averr < 0 {
 		return nil, av_err("av_dict_set", averr)
 	}
-	if averr := C.av_dict_set_int(&opts, creorderqueuesize, C.int64_t(0), 0); averr < 0 {
+	if averr := C.av_dict_set_int(&opts, creorderqueuesize, C.int64_t(768), 0); averr < 0 {
 		return nil, av_err("av_dict_set", averr)
 	}
 
