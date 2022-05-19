@@ -1,9 +1,10 @@
 package av
 
 /*
-#cgo pkg-config: libavcodec libavformat
+#cgo pkg-config: libavcodec libavformat libavutil
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/hwcontext.h>
 */
 import "C"
 import (
@@ -25,13 +26,13 @@ type DecodeContext struct {
 	doneCh   chan bool
 }
 
-func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
-	codec := C.avcodec_find_decoder(stream.stream.codecpar.codec_id)
-	if codec == nil {
-		return nil, errors.New("failed to find decoder")
-	}
+var (
+	cthreads = C.CString("threads")
+	cauto = C.CString("auto")
+)
 
-	decoderctx := C.avcodec_alloc_context3(codec)
+func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
+	decoderctx := C.avcodec_alloc_context3(nil)
 	if decoderctx == nil {
 		return nil, errors.New("failed to create decoder context")
 	}
@@ -40,17 +41,30 @@ func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, erro
 		return nil, av_err("avcodec_parameters_to_context", averr)
 	}
 
+	codec := C.avcodec_find_decoder(decoderctx.codec_id)
+	if codec == nil {
+		return nil, errors.New("failed to find decoder")
+	}
+
+	decoderctx.codec_id = codec.id
+
 	if stream.stream.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
 		decoderctx.framerate = C.av_guess_frame_rate(demuxer.AVFormatContext(), stream.stream, nil)
 	}
 
-	decoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY
-	decoderctx.flags2 |= C.AV_CODEC_FLAG2_FAST   // accept artifacts at slice edges, https://stackoverflow.com/a/54873148/86433
-	decoderctx.flags2 |= C.AV_CODEC_FLAG2_CHUNKS // indicate that the we might truncate at packet boundaries
+	decoderctx.flags2 |= C.AV_CODEC_FLAG2_FAST
 
-	if averr := C.avcodec_open2(decoderctx, codec, nil); averr < 0 {
+	var opts *C.AVDictionary
+	defer C.av_dict_free(&opts)
+	if averr := C.av_dict_set(&opts, cthreads, cauto, 0); averr < 0 {
+		return nil, av_err("av_dict_set", averr)
+	}
+
+	if averr := C.avcodec_open2(decoderctx, codec, &opts); averr < 0 {
 		return nil, av_err("avcodec_open2", averr)
 	}
+
+	stream.stream.discard = C.AVDISCARD_DEFAULT
 
 	codecType := webrtc.RTPCodecType(0)
 	switch stream.stream.codecpar.codec_type {
