@@ -107,6 +107,10 @@ func NewEncoder(config *EncoderConfiguration) (*EncodeContext, error) {
 	}
 
 	encoderctx.flags |= C.AV_CODEC_FLAG_LOW_DELAY
+	
+	if averr := C.av_dict_set(&opts, cthreads, cauto, 0); averr < 0 {
+		return nil, av_err("av_dict_set", averr)
+	}
 
 	if config.Options != nil {
 		for k, v := range config.Options {
