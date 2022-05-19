@@ -83,7 +83,6 @@ func (c *DeviceContext) Run() error {
 				return err
 			}
 		}
-		C.av_packet_unref(p.packet)
 	}
 }
 
