@@ -13,10 +13,6 @@ import (
 	"github.com/pion/webrtc/v3"
 )
 
-type AVFormatContext interface {
-	AVFormatContext() *C.AVFormatContext
-}
-
 type DecodeContext struct {
 	Sink       AVFrameWriteCloser
 	decoderctx *C.AVCodecContext
@@ -31,7 +27,7 @@ var (
 	cauto = C.CString("auto")
 )
 
-func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, error) {
+func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error) {
 	decoderctx := C.avcodec_alloc_context3(nil)
 	if decoderctx == nil {
 		return nil, errors.New("failed to create decoder context")
@@ -49,7 +45,7 @@ func NewDecoder(demuxer AVFormatContext, stream *AVStream) (*DecodeContext, erro
 	decoderctx.codec_id = codec.id
 
 	if stream.stream.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
-		decoderctx.framerate = C.av_guess_frame_rate(demuxer.AVFormatContext(), stream.stream, nil)
+		decoderctx.framerate = C.av_guess_frame_rate(demuxer.avformatctx, stream.stream, nil)
 	}
 
 	decoderctx.flags2 |= C.AV_CODEC_FLAG2_FAST
@@ -106,6 +102,8 @@ func (c *DecodeContext) drainLoop() {
 			c.err = av_err("avcodec_send_packet", averr)
 			return
 		}
+		
+		p.Unref()
 
 		for {
 			f := NewAVFrame()
@@ -129,11 +127,13 @@ func (c *DecodeContext) drainLoop() {
 					return
 				}
 			}
+			f.Unref()
 		}
 	}
 }
 
 func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
+	p.Ref()
 	c.packetCh <- p
 	return c.err
 }

@@ -207,18 +207,17 @@ func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
 	}
 
 	for {
-		g := NewAVFrame()
-		if res := C.av_buffersink_get_frame(c.buffersinkctx, g.frame); res < 0 {
+		if res := C.av_buffersink_get_frame(c.buffersinkctx, f.frame); res < 0 {
 			if res == AVERROR(C.EAGAIN) {
 				return nil
 			}
 			return av_err("failed to receive frame", res)
 		}
 
-		g.frame.pts = g.frame.best_effort_timestamp
+		f.frame.pts = f.frame.best_effort_timestamp
 
 		if sink := c.Sink; sink != nil {
-			if err := sink.WriteAVFrame(g); err != nil {
+			if err := sink.WriteAVFrame(f); err != nil {
 				return err
 			}
 		}

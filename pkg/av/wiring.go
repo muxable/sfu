@@ -25,20 +25,6 @@ func (c *DemuxContext) NewDecoders() (DecodeContexts, error) {
 	return decoders, nil
 }
 
-func (c *DeviceContext) NewDecoders() (DecodeContexts, error) {
-	streams := c.Streams()
-	decoders := make([]*DecodeContext, len(streams))
-	for i, stream := range streams {
-		decoder, err := NewDecoder(c, stream)
-		if err != nil {
-			return nil, err
-		}
-		decoders[i] = decoder
-		c.Sinks = append(c.Sinks, &IndexedSink{Index: 0, AVPacketWriteCloser: decoder})
-	}
-	return decoders, nil
-}
-
 func (c DecodeContexts) MapEncoderConfigurations(audio, video *EncoderConfiguration) ([]*EncoderConfiguration, error) {
 	configs := make([]*EncoderConfiguration, len(c))
 	for i, decoder := range c {

@@ -9,6 +9,7 @@ package av
 import "C"
 import (
 	"runtime"
+	"sync"
 )
 
 func init() {
@@ -17,29 +18,83 @@ func init() {
 
 // These are useful to avoid leaking the cgo interface.
 
+// these structs also include reference counting because I cannot make heads or tails of how ffmpeg's reference counting works.
+
 type AVPacket struct {
+	sync.Mutex
+
 	packet   *C.AVPacket
 	timebase C.AVRational // not owned by the packet, just a way to pass information between the demuxer/decoder and encoder/muxer.
+
+	references int
 }
 
 func NewAVPacket() *AVPacket {
-	avpacket := &AVPacket{packet: C.av_packet_alloc()}
-	runtime.SetFinalizer(avpacket, func(avpacket *AVPacket) {
-		C.av_packet_free(&avpacket.packet)
-	})
-	return avpacket
+	return &AVPacket{packet: C.av_packet_alloc(), references: 1}
+}
+
+func (p *AVPacket) Ref() {
+	p.Lock()
+	defer p.Unlock()
+
+	if p.references == 0 {
+		p.packet = C.av_packet_alloc()
+	}
+
+	p.references++
+}
+
+func (p *AVPacket) Unref() {
+	p.Lock()
+	defer p.Unlock()
+	
+	if p.references == 0 {
+		panic("illegal unref")
+	}
+
+	p.references--
+	if p.references == 0 {
+		C.av_packet_free(&p.packet)
+		p.packet = nil
+	}
 }
 
 type AVFrame struct {
+	sync.Mutex
+
 	frame *C.AVFrame
+
+	references int
 }
 
 func NewAVFrame() *AVFrame {
-	avframe := &AVFrame{frame: C.av_frame_alloc()}
-	runtime.SetFinalizer(avframe, func(avframe *AVFrame) {
-		C.av_frame_free(&avframe.frame)
-	})
-	return avframe
+	return &AVFrame{frame: C.av_frame_alloc(), references: 1}
+}
+
+func (f *AVFrame) Ref() {
+	f.Lock()
+	defer f.Unlock()
+
+	if f.references == 0 {
+		f.frame = C.av_frame_alloc()
+	}
+
+	f.references++
+}
+
+func (f *AVFrame) Unref() {
+	f.Lock()
+	defer f.Unlock()
+	
+	if f.references == 0 {
+		panic("illegal unref")
+	}
+
+	f.references--
+	if f.references == 0 {
+		C.av_frame_free(&f.frame)
+		f.frame = nil
+	}
 }
 
 type AVMediaType int
