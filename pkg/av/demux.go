@@ -1,7 +1,8 @@
 package av
 
 /*
-#cgo pkg-config: libavformat
+#cgo pkg-config: libavformat libavdevice
+#include <libavdevice/avdevice.h>
 #include <libavformat/avformat.h>
 #include "demux.h"
 */
@@ -16,6 +17,10 @@ import (
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
 )
+
+func init() {
+	C.avdevice_register_all()
+}
 
 type DemuxContext struct {
 	Sinks       []*IndexedSink
@@ -132,8 +137,33 @@ func NewRawDemuxer(in io.Reader) (*DemuxContext, error) {
 	return c, nil
 }
 
-func (c *DemuxContext) AVFormatContext() *C.AVFormatContext {
-	return c.avformatctx
+// v4l2, /dev/video0 for example
+func NewDeviceDemuxer(format, device string) (*DemuxContext, error) {
+	cformat := C.CString(format)
+	defer C.free(unsafe.Pointer(cformat))
+
+	inputformat := C.av_find_input_format(cformat)
+	if inputformat == nil {
+		return nil, errors.New("could not find sdp format")
+	}
+
+	avformatctx := C.avformat_alloc_context()
+	if avformatctx == nil {
+		return nil, errors.New("failed to create format context")
+	}
+
+	cdevice := C.CString(device)
+	defer C.free(unsafe.Pointer(cdevice))
+
+	if averr := C.avformat_open_input(&avformatctx, cdevice, inputformat, nil); averr < 0 {
+		return nil, av_err("avformat_open_input", averr)
+	}
+
+	if averr := C.avformat_find_stream_info(avformatctx, nil); averr < 0 {
+		return nil, av_err("avformat_find_stream_info", averr)
+	}
+
+	return &DemuxContext{avformatctx: avformatctx}, nil
 }
 
 //export goReadBufferFunc
@@ -201,13 +231,11 @@ func (c *DemuxContext) Run() error {
 		if sink := c.Sinks[streamidx]; sink != nil {
 			p.timebase = streams[streamidx].stream.time_base
 			p.packet.stream_index = C.int(sink.Index)
-			if p.packet.stream_index == 1 {
-				continue
-			}
 			if err := sink.WriteAVPacket(p); err != nil {
 				return err
 			}
 		}
+		p.Unref()
 	}
 }
 
@@ -224,5 +252,3 @@ func (c *DemuxContext) Close() error {
 
 	return nil
 }
-
-var _ AVFormatContext = (*DeviceContext)(nil)

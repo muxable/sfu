@@ -183,9 +183,10 @@ func (c *EncodeContext) drainLoop() {
 			return
 		}
 
+		f.Unref()
+
 		for {
 			p := NewAVPacket()
-			C.av_new_packet(p.packet, p.packet.size)
 			if res := C.avcodec_receive_packet(c.encoderctx, p.packet); res < 0 {
 				if res == AVERROR(C.EAGAIN) {
 					break
@@ -202,11 +203,13 @@ func (c *EncodeContext) drainLoop() {
 					return
 				}
 			}
+			p.Unref()
 		}
 	}
 }
 
 func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
+	f.Ref()
 	c.frameCh <- f
 	return c.err
 }
