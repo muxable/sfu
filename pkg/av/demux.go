@@ -16,6 +16,7 @@ import (
 	"github.com/mattn/go-pointer"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -26,6 +27,7 @@ type DemuxContext struct {
 	Sinks       []*IndexedSink
 	avformatctx *C.AVFormatContext
 	rtpin       rtpio.RTPReader
+	rtpseq      *uint16 // used for debugging.
 	rawin       io.Reader
 }
 
@@ -182,6 +184,11 @@ func goReadBufferFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 		if err != nil {
 			return AVERROR(C.EINVAL)
 		}
+
+		if d.rtpseq != nil && p.SequenceNumber != *d.rtpseq + 1 {
+			zap.L().Warn("lost packets", zap.Uint16("prev", *d.rtpseq), zap.Uint16("seq", p.SequenceNumber))
+		}
+		d.rtpseq = &p.SequenceNumber
 
 		if C.int(len(b)) > bufsize {
 			return AVERROR(C.ENOMEM)
