@@ -18,10 +18,12 @@ import (
 )
 
 type FilterContext struct {
-	buffersrcctx  *C.AVFilterContext
-	buffersinkctx *C.AVFilterContext
-	filtergraph   *C.AVFilterGraph
-	Sink          AVFrameWriteCloser
+	buffersrcctx   *C.AVFilterContext
+	buffersinkctx  *C.AVFilterContext
+	filtergraph    *C.AVFilterGraph
+	Sink           AVFrameWriteCloser
+	inputtimebase  C.AVRational
+	outputtimebase C.AVRational
 }
 
 var (
@@ -195,9 +197,11 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 	}
 
 	return &FilterContext{
-		buffersrcctx:  buffersrcctx,
-		buffersinkctx: buffersinkctx,
-		filtergraph:   filtergraph,
+		buffersrcctx:   buffersrcctx,
+		buffersinkctx:  buffersinkctx,
+		filtergraph:    filtergraph,
+		inputtimebase:  decctx.time_base,
+		outputtimebase: encctx.time_base,
 	}, nil
 }
 
@@ -215,6 +219,9 @@ func (c *FilterContext) WriteAVFrame(f *AVFrame) error {
 		}
 
 		f.frame.pts = f.frame.best_effort_timestamp
+
+		// apparently we have to manually rescale the pts?
+		f.frame.pts = C.av_rescale_q(f.frame.pts, c.inputtimebase, c.outputtimebase)
 
 		if sink := c.Sink; sink != nil {
 			if err := sink.WriteAVFrame(f); err != nil {
