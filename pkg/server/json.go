@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/muxable/sfu/pkg/cdn"
 	"github.com/pion/interceptor"
+	"github.com/pion/interceptor/pkg/nack"
 	"github.com/pion/webrtc/v3"
 	"go.uber.org/zap"
 )
@@ -74,7 +75,27 @@ func RunJSONServer(addr string, node *cdn.LocalCDN) error {
 	}
 
 	i := &interceptor.Registry{}
-	if err := webrtc.RegisterDefaultInterceptors(m, i); err != nil {
+	
+	generator, err := nack.NewGeneratorInterceptor()
+	if err != nil {
+		return err
+	}
+
+	responder, err := nack.NewResponderInterceptor(nack.ResponderSize(4096))
+	if err != nil {
+		return err
+	}
+
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack"}, webrtc.RTPCodecTypeVideo)
+	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "nack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
+	i.Add(responder)
+	i.Add(generator)
+	
+	if err := webrtc.ConfigureRTCPReports(i); err != nil {
+		return err
+	}
+
+	if err := webrtc.ConfigureTWCCSender(m, i); err != nil {
 		return err
 	}
 
@@ -185,6 +206,13 @@ func RunJSONServer(addr string, node *cdn.LocalCDN) error {
 				c.WriteJSON(Signal{Error: err})
 				return
 			}
+			go func() {
+				for {
+					if _, _, err := sender.ReadRTCP(); err != nil {
+						return
+					}
+				}
+			}()
 			track.OnClose(func() {
 				if err := pc.RemoveTrack(sender); err != nil {
 					mu.Lock()

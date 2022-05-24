@@ -120,13 +120,6 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 		panic(err)
 	}
 
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeVP8, 90000, 0, "", videoRTCPFeedback},
-		PayloadType:        96,
-	}, webrtc.RTPCodecTypeVideo); err != nil {
-		panic(err)
-	}
-
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return err
 	}

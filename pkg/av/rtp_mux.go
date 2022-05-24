@@ -30,6 +30,7 @@ type RTPMuxContext struct {
 	avformatctxs []*C.AVFormatContext
 	Sink         rtpio.RTPWriteCloser
 	packet       *rtp.Packet
+	dts          C.long
 }
 
 func NewRTPMuxer(params []*AVCodecParameters) (*RTPMuxContext, error) {
@@ -117,6 +118,12 @@ func (c *RTPMuxContext) WriteAVPacket(p *AVPacket) error {
 	p.packet.stream_index = 0
 	stream := (*[1 << 30]*C.AVStream)(unsafe.Pointer(avformatctx.streams))[0]
 	C.av_packet_rescale_ts(p.packet, p.timebase, stream.time_base)
+	if p.packet.dts < c.dts {
+		zap.L().Warn("non-monotonic dts", zap.Int64("dts", int64(c.dts)), zap.Int64("received", int64(p.packet.dts)))
+		p.packet.dts = c.dts
+		p.packet.pts = c.dts
+	}
+	c.dts = p.packet.dts
 	if averr := C.av_write_frame(avformatctx, p.packet); averr < 0 {
 		return av_err("av_write_frame", averr)
 	}
