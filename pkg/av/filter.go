@@ -13,7 +13,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"log"
 	"unsafe"
 )
 
@@ -75,8 +74,6 @@ func NewFilter(decoder *DecodeContext, encoder *EncodeContext) (*FilterContext, 
 			decctx.width, decctx.height, decctx.pix_fmt,
 			decctx.time_base.num, decctx.time_base.den,
 			decctx.sample_aspect_ratio.num, decctx.sample_aspect_ratio.den)
-
-		log.Printf("%v", decdesc)
 
 		cdecdesc := C.CString(decdesc)
 		defer C.free(unsafe.Pointer(cdecdesc))
