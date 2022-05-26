@@ -68,8 +68,8 @@ func (c *DecodeContext) NewEncoder(configuration *EncoderConfiguration) (*Encode
 		configuration.FrameRateNumerator = uint32(c.decoderctx.framerate.num)
 		configuration.FrameRateDenominator = uint32(c.decoderctx.framerate.den)
 	}
-	configuration.TimeBaseNumerator = uint32(c.decoderctx.time_base.num)
-	configuration.TimeBaseDenominator = uint32(c.decoderctx.time_base.den)
+	configuration.TimeBaseNumerator = configuration.FrameRateDenominator
+	configuration.TimeBaseDenominator = configuration.FrameRateNumerator
 
 	enc, err := NewEncoder(configuration)
 	if err != nil {
