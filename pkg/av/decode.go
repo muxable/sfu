@@ -82,21 +82,13 @@ func NewDecoder(demuxer *DemuxContext, stream *AVStream) (*DecodeContext, error)
 
 func (c *DecodeContext) drainLoop() {
 	defer func() {
-		// close the sink
-		if sink := c.Sink; sink != nil {
-			if err := sink.Close(); err != nil {
-				c.err = err
-			}
-		}
-
-		// free the context
-		C.avcodec_free_context(&c.decoderctx)
-
 		c.doneCh <- true
 	}()
 	for p := range c.packetCh {
-		C.av_packet_rescale_ts(p.packet, p.timebase, c.decoderctx.time_base)
-		p.timebase = c.decoderctx.time_base
+		if p.packet != nil {
+			C.av_packet_rescale_ts(p.packet, p.timebase, c.decoderctx.time_base)
+			p.timebase = c.decoderctx.time_base
+		}
 
 		if averr := C.avcodec_send_packet(c.decoderctx, p.packet); averr < 0 {
 			c.err = av_err("avcodec_send_packet", averr)
@@ -141,5 +133,16 @@ func (c *DecodeContext) WriteAVPacket(p *AVPacket) error {
 func (c *DecodeContext) Close() error {
 	c.packetCh <- &AVPacket{}
 	<-c.doneCh
+
+	// close the sink
+	if sink := c.Sink; sink != nil {
+		if err := sink.Close(); err != nil {
+			c.err = err
+		}
+	}
+
+	// free the context
+	C.avcodec_free_context(&c.decoderctx)
+
 	return c.err
 }
