@@ -47,9 +47,9 @@ func (p *AVPacket) Ref() {
 func (p *AVPacket) Unref() {
 	p.Lock()
 	defer p.Unlock()
-	
+
 	if p.references == 0 {
-		panic("illegal unref")
+		return
 	}
 
 	p.references--
@@ -87,7 +87,7 @@ func (f *AVFrame) Unref() {
 	defer f.Unlock()
 	
 	if f.references == 0 {
-		panic("illegal unref")
+		return
 	}
 
 	f.references--
