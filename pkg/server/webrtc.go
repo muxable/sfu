@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -39,8 +40,8 @@ func RunWebRTCServer(addr string, trackHandler TrackHandler, videoCodec, audioCo
 		trackHandler: trackHandler,
 		videoCodec:   videoCodec,
 		audioCodec:   audioCodec,
-		counts:       make(map[string]uint16),
-		buffers:      make(map[string]*buffer.ReorderBuffer),
+		buffers:      make(map[string]rtpio.RTPWriteCloser),
+		logs: 		  make(map[string]*buffer.ReceiveLog),
 		sources:      make(map[string]map[webrtc.SSRC]*webrtc.PeerConnection),
 	})
 	return srv.Serve(conn)
@@ -53,8 +54,8 @@ type SFUServer struct {
 	trackHandler           TrackHandler
 	videoCodec, audioCodec webrtc.RTPCodecCapability
 
-	counts  map[string]uint16
-	buffers map[string]*buffer.ReorderBuffer
+	buffers map[string]rtpio.RTPWriteCloser
+	logs map[string]*buffer.ReceiveLog
 	sources map[string]map[webrtc.SSRC]*webrtc.PeerConnection
 }
 
@@ -150,8 +151,6 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 	i.Add(responder)
 	i.Add(generator)
 
-	log.Printf("creating peer connection")
-
 	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
 	})
@@ -165,27 +164,30 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 		log.Printf("got track %s", key)
 		s.Lock()
 
-		if s.counts[key] == 0 {
-			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 1*time.Second)
+		if s.buffers[key] == nil {
+			r, w := rtpio.RTPPipe()
 
-			go rtpio.CopyRTP(buffer, &trackWrapper{tr})
+			s.logs[key] = buffer.NewReceiveLog(512)
 
 			go func() {
-				transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), buffer)
+				transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), r)
 				if err != nil {
 					zap.L().Error("failed to create transcoder", zap.Error(err))
-					s.Unlock()
 					return
 				}
 
-				if err := transcoder.Run(); err != nil {
+				if err := transcoder.Run(); err != io.EOF {
 					zap.L().Error("failed to run transcoder", zap.Error(err))
 				}
 			}()
 
+
 			go func() {
-				for nack := range buffer.Nacks(100*time.Millisecond) {
+				timer := time.NewTicker(100 * time.Millisecond)
+				senderSSRC := rand.Uint32()
+				for range timer.C {
 					s.Lock()
+					receiveLog := s.logs[key]
 					sources := s.sources[key]
 					if len(sources) == 0 {
 						zap.L().Warn("no sources for nack", zap.String("key", key))
@@ -199,7 +201,21 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 						ssrcs = append(ssrcs, ssrc)
 					}
 					ssrc := ssrcs[rand.Intn(len(ssrcs))]
-					nack.MediaSSRC = uint32(ssrc)
+
+					missing := receiveLog.MissingSeqNumbers(0)
+					if len(missing) == 0 {
+						s.Unlock()
+						continue
+					}
+
+					nack := &rtcp.TransportLayerNack{
+						SenderSSRC: senderSSRC,
+						MediaSSRC:  uint32(ssrc),
+						Nacks:      rtcp.NackPairsFromSequenceNumbers(missing),
+					}
+
+					log.Printf("writing nack %+v", nack)
+
 					if err := sources[ssrc].WriteRTCP([]rtcp.Packet{nack}); err != nil {
 						zap.L().Error("failed to write nack", zap.Error(err))
 					}
@@ -208,12 +224,10 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 				}
 			}()
 
-			s.buffers[key] = buffer
+			s.buffers[key] = w
 			s.sources[key] = make(map[webrtc.SSRC]*webrtc.PeerConnection)
-		} else {
-			go rtpio.CopyRTP(s.buffers[key], &trackWrapper{tr})
 		}
-		s.counts[key]++
+		go rtpio.CopyRTP(s.buffers[key], &trackWrapper{tr})
 		s.sources[key][tr.SSRC()] = pc
 
 		s.Unlock()
@@ -224,21 +238,16 @@ func (s *SFUServer) Publish(srv api.SFU_PublishServer) error {
 				break
 			}
 		}
+	})
 
-		s.Lock()
-
-		s.counts[key]--
-		delete(s.sources[key], tr.SSRC())
-		if s.counts[key] == 0 {
-			if err := s.buffers[key].Close(); err != nil {
+	// connection is governed by the signalling channel.
+	defer func() {
+		for _, buffer := range s.buffers {
+			if err := buffer.Close(); err != nil {
 				zap.L().Error("failed to close buffer", zap.Error(err))
 			}
-			s.buffers[key] = nil
-			s.sources[key] = nil
 		}
-
-		s.Unlock()
-	})
+	}()
 
 	signaller := signal.NewSignaller(pc)
 

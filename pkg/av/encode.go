@@ -10,6 +10,7 @@ package av
 import "C"
 import (
 	"errors"
+	"io"
 	"strings"
 	"unsafe"
 
@@ -155,16 +156,6 @@ func (c *EncodeContext) SetBitrate(bitrate int64) {
 
 func (c *EncodeContext) drainLoop() {
 	defer func() {
-		// close the sink
-		if sink := c.Sink; sink != nil {
-			if err := sink.Close(); err != nil {
-				c.err = err
-			}
-		}
-
-		// free the context
-		C.avcodec_free_context(&c.encoderctx)
-
 		c.doneCh <- true
 	}()
 	for f := range c.frameCh {
@@ -217,5 +208,20 @@ func (c *EncodeContext) WriteAVFrame(f *AVFrame) error {
 func (c *EncodeContext) Close() error {
 	c.frameCh <- &AVFrame{}
 	<-c.doneCh
-	return c.err
+
+	if c.err != io.EOF {
+		return c.err
+	}
+
+	// close the sink
+	if sink := c.Sink; sink != nil {
+		if err := sink.Close(); err != nil {
+			return err
+		}
+	}
+
+	// free the context
+	C.avcodec_free_context(&c.encoderctx)
+
+	return nil
 }

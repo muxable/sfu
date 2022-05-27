@@ -9,6 +9,7 @@ package av
 import "C"
 import (
 	"errors"
+	"io"
 
 	"github.com/pion/webrtc/v3"
 )
@@ -134,15 +135,19 @@ func (c *DecodeContext) Close() error {
 	c.packetCh <- &AVPacket{}
 	<-c.doneCh
 
+	if c.err != io.EOF {
+		return c.err
+	}
+
 	// close the sink
 	if sink := c.Sink; sink != nil {
 		if err := sink.Close(); err != nil {
-			c.err = err
+			return err
 		}
 	}
 
 	// free the context
 	C.avcodec_free_context(&c.decoderctx)
 
-	return c.err
+	return nil
 }

@@ -1,7 +1,7 @@
 package buffer
 
 import (
-	"math"
+	"io"
 	"math/rand"
 	"sync"
 	"time"
@@ -13,23 +13,19 @@ import (
 
 type BufferedPacket struct {
 	*rtp.Packet
-	EvictRTPTime uint64
-	AbsTsSeq     uint64
-	Evicted      bool // tombstone packets to allow late-arriving packets to be discarded
+	EvictTime time.Time
+	Evicted   bool // tombstone packets to allow late-arriving packets to be discarded
 }
 
 type ReorderBuffer struct {
 	sync.Mutex
 
-	clockRate         uint32
-	delay             uint64
-	buffer            [1 << 16]*BufferedPacket
-	prevTimestamp     uint32
-	absTimestamp      uint64
-	minAbsTsSeq       uint64
-	startRTPTimestamp uint64
-	startNTPTimestamp time.Time
-	count             uint16
+	ended bool
+
+	clockRate uint32
+	delay     time.Duration
+	buffer    [1 << 16]*BufferedPacket
+	count     uint16
 
 	evict uint16
 
@@ -43,7 +39,7 @@ type ReorderBuffer struct {
 func NewReorderBuffer(clockRate uint32, delay time.Duration) *ReorderBuffer {
 	return &ReorderBuffer{
 		clockRate: clockRate,
-		delay:     uint64(delay.Seconds() * float64(clockRate)),
+		delay:     delay,
 	}
 }
 
@@ -51,45 +47,49 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 	b.Lock()
 	defer b.Unlock()
 
-	// update the timestamp counters
-	if b.absTimestamp == 0 {
-		b.prevTimestamp = p.Timestamp
-		b.absTimestamp = uint64(p.Timestamp)
-		b.startRTPTimestamp = uint64(p.Timestamp)
-		b.startNTPTimestamp = time.Now()
-	} else {
-		// calculate the true timestamp
-		tsn := p.Timestamp
-		tsm := b.prevTimestamp
-
-		pAbsTimestamp := b.absTimestamp
-
-		if tsn > tsm && tsn-tsm < 1<<31 {
-			pAbsTimestamp += uint64(tsn - tsm)
-		} else if tsn < tsm && tsm-tsn >= 1<<31 {
-			pAbsTimestamp += 1<<32 - uint64(tsm-tsn)
-		} else if tsn > tsm && tsn-tsm >= 1<<31 {
-			pAbsTimestamp -= 1<<32 - uint64(tsn-tsm)
-		} else if tsn < tsm && tsm-tsn < 1<<31 {
-			pAbsTimestamp -= uint64(tsm - tsn)
-		}
-
-		if (pAbsTimestamp<<16)+uint64(p.SequenceNumber) < b.minAbsTsSeq {
-			// reject this packet, it's too old.
-			if q := b.buffer[p.SequenceNumber]; q == nil || q.Timestamp != p.Timestamp {
-				zap.L().Warn("rejecting packet",
-					zap.Uint16("seq", p.SequenceNumber),
-					zap.Uint32("ts", p.Timestamp),
-					zap.Uint64("absTimestamp", pAbsTimestamp),
-					zap.Uint64("minAbsTimestamp", b.minAbsTsSeq),
-					zap.Uint16("evict", b.evict))
-			}
-			return nil
-		}
-
-		b.prevTimestamp = tsn
-		b.absTimestamp = pAbsTimestamp
+	if b.ended {
+		return io.EOF
 	}
+
+	// update the timestamp counters
+	// if b.absTimestamp == 0 {
+	// 	b.prevTimestamp = p.Timestamp
+	// 	b.absTimestamp = uint64(p.Timestamp)
+	// 	b.startRTPTimestamp = uint64(p.Timestamp)
+	// 	b.startNTPTimestamp = time.Now()
+	// } else {
+	// 	// calculate the true timestamp
+	// 	tsn := p.Timestamp
+	// 	tsm := b.prevTimestamp
+
+	// 	pAbsTimestamp := b.absTimestamp
+
+	// 	if tsn > tsm && tsn-tsm < 1<<31 {
+	// 		pAbsTimestamp += uint64(tsn - tsm)
+	// 	} else if tsn < tsm && tsm-tsn >= 1<<31 {
+	// 		pAbsTimestamp += 1<<32 - uint64(tsm-tsn)
+	// 	} else if tsn > tsm && tsn-tsm >= 1<<31 {
+	// 		pAbsTimestamp -= 1<<32 - uint64(tsn-tsm)
+	// 	} else if tsn < tsm && tsm-tsn < 1<<31 {
+	// 		pAbsTimestamp -= uint64(tsm - tsn)
+	// 	}
+
+	// 	if (pAbsTimestamp<<16)+uint64(p.SequenceNumber) < b.minAbsTsSeq {
+	// 		// reject this packet, it's too old.
+	// 		if q := b.buffer[p.SequenceNumber]; q == nil || q.Timestamp != p.Timestamp {
+	// 			zap.L().Warn("rejecting packet",
+	// 				zap.Uint16("seq", p.SequenceNumber),
+	// 				zap.Uint32("ts", p.Timestamp),
+	// 				zap.Uint64("absTimestamp", pAbsTimestamp),
+	// 				zap.Uint64("minAbsTimestamp", b.minAbsTsSeq),
+	// 				zap.Uint16("evict", b.evict))
+	// 		}
+	// 		return nil
+	// 	}
+
+	// 	b.prevTimestamp = tsn
+	// 	b.absTimestamp = pAbsTimestamp
+	// }
 
 	// calculate the expected emit time
 	// dt := time.Duration(b.absTimestamp-b.startRTPTimestamp) * time.Second / time.Duration(b.clockRate)
@@ -112,9 +112,8 @@ func (b *ReorderBuffer) WriteRTP(p *rtp.Packet) error {
 	// }
 
 	b.buffer[p.SequenceNumber] = &BufferedPacket{
-		Packet:       p,
-		EvictRTPTime: b.absTimestamp + b.delay,
-		AbsTsSeq:     (b.absTimestamp << 16) + uint64(p.SequenceNumber),
+		Packet:    p,
+		EvictTime: time.Now().Add(b.delay),
 	}
 
 	// notify the reader if it's waiting
@@ -134,61 +133,52 @@ func (b *ReorderBuffer) Len() uint16 {
 }
 
 func (b *ReorderBuffer) ReadRTP() (*rtp.Packet, error) {
-	for { // loop until we find a packet
-		// ensure we have a packet to evict.
+	// ensure we have a packet to evict.
+	b.Lock()
+	for b.count == 0 && !b.ended {
+		// this is some real fancy footwork.
+		ch := make(chan struct{})
+		b.insert = ch
+		b.Unlock()
+		<-ch
 		b.Lock()
-		for b.count == 0 {
-			// this is some real fancy footwork.
-			ch := make(chan struct{})
-			b.insert = ch
-			b.Unlock()
-			<-ch
-			b.Lock()
+	}
+
+	if b.ended {
+		// eof signal.
+		return nil, io.EOF
+	}
+
+	// if there is a packet at the eviction pointer, evict it immediately.
+	if b.buffer[b.evict] != nil {
+		p := b.buffer[b.evict]
+		b.buffer[b.evict].Evicted = true
+		b.count--
+		b.evict++
+		b.Unlock()
+		// zap.L().Debug("immediate read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
+		return p.Packet, nil
+	}
+
+	// otherwise, find the next packet and wait until its expiration time.
+	for i := b.evict; ; i++ {
+		p := b.buffer[i]
+		if p == nil || p.Evicted {
+			continue
 		}
 
-		// if there is a packet at the eviction pointer, evict it immediately.
-		if b.buffer[b.evict] != nil {
-			p := b.buffer[b.evict]
-			b.buffer[b.evict].Evicted = true
-			b.count--
-			b.evict++
-			b.minAbsTsSeq = p.AbsTsSeq + 1
-			b.Unlock()
-			// zap.L().Debug("immediate read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
-			return p.Packet, nil
-		}
+		dt := time.Until(p.EvictTime)
 
-		// otherwise, find the next packet and wait until its expiration time.
-		lowest := uint64(math.MaxUint64)
-		lowestIndex := uint16(0)
-
-		for i, j := b.evict, b.count; j > 0; i++ {
-			p := b.buffer[i]
-			if p == nil || p.Evicted {
-				continue
-			}
-			if p.EvictRTPTime < lowest {
-				lowest = p.EvictRTPTime
-				lowestIndex = uint16(i)
-			}
-			j--
-		}
-
-		rtpnow := b.rtpNow()
-
-		if lowest < rtpnow {
+		if dt <= 0 {
 			// short circuit
-			p := b.buffer[lowestIndex]
-			b.buffer[lowestIndex].Evicted = true
+			p.Evicted = true
 			b.count--
-			b.evict = lowestIndex + 1
-			b.minAbsTsSeq = p.AbsTsSeq + 1
+			b.evict = i + 1
 			b.Unlock()
 			zap.L().Debug("short circuited read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
 			return p.Packet, nil
 		}
 
-		dt := time.Duration(lowest-rtpnow) * time.Second / time.Duration(b.clockRate)
 		// contest with an update.
 		ch := make(chan struct{})
 		b.insert = ch
@@ -196,21 +186,19 @@ func (b *ReorderBuffer) ReadRTP() (*rtp.Packet, error) {
 		select {
 		case <-ch:
 			// an update was received, try again
-			break
+			return b.ReadRTP()
 
 		case <-time.After(dt):
 			// log a warning
 			b.Lock()
-			if b.evict != lowestIndex {
-				zap.L().Warn("lost packets", zap.Uint16("fromSeq", b.evict), zap.Uint16("toSeq", lowestIndex-1), zap.Duration("dt", dt))
+			if b.evict != i {
+				zap.L().Warn("lost packets", zap.Uint16("fromSeq", b.evict), zap.Uint16("toSeq", i-1), zap.Duration("dt", dt))
 			}
 
 			// then emit the next packet.
-			p := b.buffer[lowestIndex]
-			b.buffer[lowestIndex].Evicted = true
+			p.Evicted = true
 			b.count--
-			b.evict = lowestIndex + 1
-			b.minAbsTsSeq = p.AbsTsSeq + 1
+			b.evict = i + 1
 			b.Unlock()
 			zap.L().Debug("delayed read", zap.Uint16("seq", p.Packet.SequenceNumber), zap.Uint32("ts", p.Packet.Timestamp))
 			return p.Packet, nil
@@ -222,7 +210,11 @@ func (b *ReorderBuffer) Close() error {
 	b.Lock()
 	defer b.Unlock()
 
-	close(b.insert)
+	b.ended = true
+
+	if b.insert != nil {
+		close(b.insert)
+	}
 
 	// close any nack tickers
 	for _, n := range b.tickers {
@@ -244,17 +236,11 @@ func (b *ReorderBuffer) MissingSequenceNumbers() []uint16 {
 			continue
 		}
 		// mark this packet as missing, ignoring the [0, b.evict) range if uninitialized.
-		if b.minAbsTsSeq > 0 || j < b.count {
+		if b.evict > 0 || j < b.count {
 			missing = append(missing, i)
 		}
 	}
 	return missing
-}
-
-func (b *ReorderBuffer) rtpNow() uint64 {
-	now := time.Now()
-	ntpdt := now.Sub(b.startNTPTimestamp)
-	return b.startRTPTimestamp + uint64(ntpdt.Seconds()*float64(b.clockRate))
 }
 
 func (b *ReorderBuffer) Nacks(interval time.Duration) <-chan *rtcp.TransportLayerNack {

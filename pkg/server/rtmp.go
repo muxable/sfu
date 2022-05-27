@@ -104,14 +104,8 @@ func (h *RTMPHandler) OnPublish(timestamp uint32, cmd *rtmpmsg.NetStreamPublish)
 		mux.Sink = trackSink
 
 		// start the pipeline
-		if err := demux.Run(); err != nil {
-			if err != io.EOF {
-				zap.L().Error("failed to run pipeline", zap.Error(err))
-			}
-			if err := demux.Close(); err != nil {
-				zap.L().Error("failed to close pipeline", zap.Error(err))
-			}
-			return
+		if err := demux.Run(); err != io.EOF {
+			zap.L().Error("failed to run pipeline", zap.Error(err))
 		}
 	}()
 

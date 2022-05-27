@@ -115,13 +115,8 @@ func handleConn(conn *srtgo.SrtSocket, trackHandler TrackHandler, node *cdn.Loca
 		// TODO: validate the construction
 
 		// start the pipeline
-		if err := demux.Run(); err != nil {
-			if err != io.EOF {
-				zap.L().Error("failed to run pipeline", zap.Error(err))
-			}
-			if err := demux.Close(); err != nil {
-				zap.L().Error("failed to close pipeline", zap.Error(err))
-			}
+		if err := demux.Run(); err != io.EOF {
+			zap.L().Error("failed to run pipeline", zap.Error(err))
 		}
 	} else if items["m"] == "request" {
 		listeners := make([]string, 0)

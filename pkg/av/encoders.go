@@ -19,7 +19,7 @@ var DefaultVP9EncoderOptions = map[string]interface{} {
 }
 
 var DefaultOpusEncoderOptions = map[string]interface{} {
-	"fec": 1,
-	"packet_loss": 0,
-	"vbr": "constrained",
+	// "fec": 1,
+	// "packet_loss": 0,
+	// "vbr": "constrained",
 }

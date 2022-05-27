@@ -16,7 +16,6 @@ import (
 	"github.com/mattn/go-pointer"
 	"github.com/pion/rtpio/pkg/rtpio"
 	"github.com/pion/webrtc/v3"
-	"go.uber.org/zap"
 )
 
 func init() {
@@ -29,6 +28,7 @@ type DemuxContext struct {
 	rtpin       rtpio.RTPReader
 	rtpseq      *uint16 // used for debugging.
 	rawin       io.Reader
+	eof         bool
 }
 
 var (
@@ -55,7 +55,7 @@ func NewRTPDemuxer(codec webrtc.RTPCodecParameters, in rtpio.RTPReader) (*DemuxC
 	if averr := C.av_dict_set(&opts, csdpflags, ccustomio, 0); averr < 0 {
 		return nil, av_err("av_dict_set", averr)
 	}
-	if averr := C.av_dict_set_int(&opts, creorderqueuesize, C.int64_t(0), 0); averr < 0 {
+	if averr := C.av_dict_set_int(&opts, creorderqueuesize, C.int64_t(2048), 0); averr < 0 {
 		return nil, av_err("av_dict_set", averr)
 	}
 
@@ -177,6 +177,7 @@ func goReadBufferFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 			if err != io.EOF {
 				return AVERROR(C.EIO)
 			}
+			d.eof = true
 			return AVERROR_EOF
 		}
 
@@ -185,10 +186,10 @@ func goReadBufferFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 			return AVERROR(C.EINVAL)
 		}
 
-		if d.rtpseq != nil && p.SequenceNumber != *d.rtpseq + 1 {
-			zap.L().Warn("lost packets", zap.Uint16("prev", *d.rtpseq), zap.Uint16("seq", p.SequenceNumber))
-		}
-		d.rtpseq = &p.SequenceNumber
+		// if d.rtpseq != nil && p.SequenceNumber != *d.rtpseq+1 {
+		// 	zap.L().Warn("lost packets", zap.Uint16("prev", *d.rtpseq), zap.Uint16("seq", p.SequenceNumber))
+		// }
+		// d.rtpseq = &p.SequenceNumber
 
 		if C.int(len(b)) > bufsize {
 			return AVERROR(C.ENOMEM)
@@ -201,9 +202,7 @@ func goReadBufferFunc(opaque unsafe.Pointer, cbuf *C.uint8_t, bufsize C.int) C.i
 	buf := make([]byte, int(bufsize))
 	n, err := d.rawin.Read(buf)
 	if err != nil {
-		if err != io.EOF {
-			return AVERROR(C.EIO)
-		}
+		d.eof = true
 		return AVERROR_EOF
 	}
 	C.memcpy(unsafe.Pointer(cbuf), unsafe.Pointer(&buf[0]), C.ulong(n))
@@ -229,7 +228,7 @@ func (c *DemuxContext) Run() error {
 	if len(c.Sinks) != len(streams) {
 		return errors.New("number of streams does not match number of sinks")
 	}
-	for {
+	for !c.eof {
 		p := NewAVPacket()
 		if averr := C.av_read_frame(c.avformatctx, p.packet); averr < 0 {
 			return av_err("av_read_frame", averr)
@@ -244,6 +243,7 @@ func (c *DemuxContext) Run() error {
 		}
 		p.Unref()
 	}
+	return c.Close()
 }
 
 func (c *DemuxContext) Close() error {
