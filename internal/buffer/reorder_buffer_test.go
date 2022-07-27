@@ -1,6 +1,7 @@
 package buffer
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -351,5 +352,69 @@ func TestReorderBuffer_RejectsOldPackets(t *testing.T) {
 
 	if b.Len() != 0 {
 		t.Errorf("Expected 0, got %d", b.Len())
+	}
+}
+
+func TestReorderBuffer_ReadBlocksOnWait(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	defer logger.Sync()
+	undo := zap.ReplaceGlobals(logger)
+	defer undo()
+
+	b := NewReorderBuffer(1, time.Second)
+
+	errCh := make(chan error)
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		errCh <- b.WriteRTP(newPacket(0, 0))
+	}()
+
+	p1, err := b.ReadRTP()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.SequenceNumber != 0 {
+		t.Errorf("Expected 3, got %d", p1.SequenceNumber)
+	}
+
+	if b.Len() != 0 {
+		t.Errorf("Expected 0, got %d", b.Len())
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReorderBuffer_CloseTriggersEOF(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	defer logger.Sync()
+	undo := zap.ReplaceGlobals(logger)
+	defer undo()
+
+	b := NewReorderBuffer(1, time.Second)
+
+	errCh := make(chan error)
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		errCh <- b.Close()
+	}()
+
+	p1, err := b.ReadRTP()
+	if err != io.EOF {
+		t.Fatal(err)
+	}
+	if p1 != nil {
+		t.Errorf("Expected nil, got %v", p1)
+	}
+
+	if b.Len() != 0 {
+		t.Errorf("Expected 0, got %d", b.Len())
+	}
+
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
 	}
 }
