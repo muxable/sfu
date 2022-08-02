@@ -6,7 +6,6 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/haivision/srtgo v0.0.0-20211019211331-3f0cef2e19ee
 	github.com/mattn/go-pointer v0.0.1
-	github.com/muxable/rtptools v0.1.6
 	github.com/muxable/signal v0.0.0-20220312145144-4c0e0ca92a2c
 	github.com/pion/ion-sdk-go v0.7.1-0.20220120062900-5373ebf54caf
 	github.com/pion/rtcp v1.2.9
@@ -19,12 +18,15 @@ require (
 	github.com/yutopp/go-flv v0.2.0
 	github.com/yutopp/go-rtmp v0.0.1
 	go.uber.org/zap v1.20.0
-	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd
 	google.golang.org/grpc v1.44.0
 	google.golang.org/protobuf v1.27.1
 )
 
-require github.com/google/go-cmp v0.5.7 // indirect
+require (
+	github.com/google/go-cmp v0.5.7 // indirect
+	go.uber.org/goleak v1.1.12 // indirect
+	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd // indirect
+)
 
 require (
 	github.com/benbjohnson/clock v1.3.0 // indirect
