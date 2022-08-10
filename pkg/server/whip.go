@@ -162,7 +162,12 @@ func (s *WHIPServer) Publish(body []byte) ([]byte, error) {
 
 	log.Printf("creating peer connection")
 
-	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
+	// Because docker
+	se := webrtc.SettingEngine{}
+	se.SetNAT1To1IPs([]string{"127.0.0.1"}, webrtc.ICECandidateTypeHost)
+	se.SetEphemeralUDPPortRange(5000, 5200)
+
+	pc, err := webrtc.NewAPI(webrtc.WithSettingEngine(se), webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
 	})
 	if err != nil {
