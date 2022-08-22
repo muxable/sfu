@@ -12,7 +12,6 @@ import (
 	"github.com/muxable/sfu/api"
 	"github.com/muxable/sfu/internal/buffer"
 	av "github.com/muxable/sfu/pkg/av"
-	"github.com/muxable/sfu/pkg/ccnack"
 	"github.com/pion/interceptor"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtpio/pkg/rtpio"
@@ -61,7 +60,6 @@ func RunWHIPServer(addr string, trackHandler TrackHandler, videoCodec, audioCode
 		w.Header().Set("Content-Type", "application/sdp")
 		w.WriteHeader(http.StatusCreated)
 		w.Write(sdp)
-		return
 	})
 
 	return http.ListenAndServe(addr, nil)
@@ -80,6 +78,7 @@ type WHIPServer struct {
 }
 
 func (s *WHIPServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID string, src rtpio.RTPReader) (*av.DemuxContext, error) {
+	// avformat_find_stream_info seems to be what never happens, if i skip it then id neet to manually set some of the encoder config stuff
 	demux, err := av.NewRTPDemuxer(codec, src)
 	if err != nil {
 		return nil, err
@@ -116,20 +115,6 @@ func (s *WHIPServer) newTranscoder(codec webrtc.RTPCodecParameters, streamID str
 func (s *WHIPServer) Publish(body []byte) ([]byte, error) {
 	m := &webrtc.MediaEngine{}
 
-	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"ccnack", ""}}
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeH265, 90000, 0, "", videoRTCPFeedback},
-		PayloadType:        119,
-	}, webrtc.RTPCodecTypeVideo); err != nil {
-		return nil, err
-	}
-	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{webrtc.MimeTypeOpus, 48000, 2, "minptime=10;useinbandfec=1", nil},
-		PayloadType:        111,
-	}, webrtc.RTPCodecTypeAudio); err != nil {
-		panic(err)
-	}
-
 	if err := m.RegisterDefaultCodecs(); err != nil {
 		return nil, err
 	}
@@ -144,30 +129,9 @@ func (s *WHIPServer) Publish(body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// configure ccnack
-	generator, err := ccnack.NewGeneratorInterceptor()
-	if err != nil {
-		return nil, err
-	}
-
-	responder, err := ccnack.NewResponderInterceptor()
-	if err != nil {
-		return nil, err
-	}
-
-	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack"}, webrtc.RTPCodecTypeVideo)
-	m.RegisterFeedback(webrtc.RTCPFeedback{Type: "ccnack", Parameter: "pli"}, webrtc.RTPCodecTypeVideo)
-	i.Add(responder)
-	i.Add(generator)
-
 	log.Printf("creating peer connection")
 
-	// Because docker
-	se := webrtc.SettingEngine{}
-	se.SetNAT1To1IPs([]string{"127.0.0.1"}, webrtc.ICECandidateTypeHost)
-	se.SetEphemeralUDPPortRange(5000, 5200)
-
-	pc, err := webrtc.NewAPI(webrtc.WithSettingEngine(se), webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
+	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i)).NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
 	})
 	if err != nil {
@@ -178,6 +142,7 @@ func (s *WHIPServer) Publish(body []byte) ([]byte, error) {
 		key := fmt.Sprintf("%s:%s:%s", tr.StreamID(), tr.ID(), tr.RID())
 
 		log.Printf("got track %s", key)
+		s.Lock()
 
 		if s.counts[key] == 0 {
 			buffer := buffer.NewReorderBuffer(tr.Codec().ClockRate, 1*time.Second)
@@ -188,7 +153,7 @@ func (s *WHIPServer) Publish(body []byte) ([]byte, error) {
 				transcoder, err := s.newTranscoder(tr.Codec(), tr.StreamID(), buffer)
 				if err != nil {
 					zap.L().Error("failed to create transcoder", zap.Error(err))
-					s.Unlock()
+					// s.Unlock()
 					return
 				}
 

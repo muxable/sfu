@@ -60,11 +60,17 @@ func main() {
 		Channels:  2,
 	}
 
+	// Probably fine to use the base ones, but just testing
+	webrtcVideoCodec := webrtc.RTPCodecCapability{
+		MimeType:  webrtc.MimeTypeVP8,
+		ClockRate: 90000,
+	}
+
 	go server.RunRTMPServer(*rtmpAddr, th, videoCodec, audioCodec)
 	go server.RunSRTServer(*srtAddr, th, node, videoCodec, audioCodec)
 	go server.RunJSONServer(*jsonAddr, node)
 	go server.RunWebRTCServer(*webrtcAddr, th, videoCodec, audioCodec)
-	go server.RunWHIPServer(*whipAddr, th, videoCodec, audioCodec)
+	go server.RunWHIPServer(*whipAddr, th, webrtcVideoCodec, audioCodec)
 
 	select {}
 }
