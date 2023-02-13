@@ -24,8 +24,9 @@ require (
 
 require (
 	github.com/google/go-cmp v0.5.7 // indirect
+	github.com/pion/transport/v2 v2.0.0 // indirect
 	go.uber.org/goleak v1.1.12 // indirect
-	golang.org/x/net v0.0.0-20220401154927-543a649e0bdd // indirect
+	golang.org/x/net v0.5.0 // indirect
 )
 
 require (
@@ -45,7 +46,7 @@ require (
 	github.com/mitchellh/mapstructure v1.4.2 // indirect
 	github.com/petar/GoLLRB v0.0.0-20210522233825-ae3b015fd3e9 // indirect
 	github.com/pion/datachannel v1.5.2 // indirect
-	github.com/pion/dtls/v2 v2.1.3 // indirect
+	github.com/pion/dtls/v2 v2.2.4 // indirect
 	github.com/pion/ice/v2 v2.2.2 // indirect
 	github.com/pion/interceptor v0.1.10
 	github.com/pion/ion v1.10.0 // indirect
@@ -59,7 +60,7 @@ require (
 	github.com/pion/stun v0.3.5 // indirect
 	github.com/pion/transport v0.13.0 // indirect
 	github.com/pion/turn/v2 v2.0.8 // indirect
-	github.com/pion/udp v0.1.1 // indirect
+	github.com/pion/udp v0.1.4 // indirect
 	github.com/prometheus/client_model v0.2.0 // indirect
 	github.com/prometheus/common v0.26.0 // indirect
 	github.com/prometheus/procfs v0.6.0 // indirect
@@ -67,10 +68,9 @@ require (
 	github.com/yutopp/go-amf0 v0.0.0-20180803120851-48851794bb1f // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.7.0 // indirect
-	golang.org/x/crypto v0.0.0-20220131195533-30dcbda58838 // indirect
-	golang.org/x/sys v0.0.0-20220128215802-99c3d69c2c27 // indirect
-	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
-	golang.org/x/text v0.3.7 // indirect
-	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
+	golang.org/x/crypto v0.5.0 // indirect
+	golang.org/x/sys v0.4.0 // indirect
+	golang.org/x/term v0.4.0 // indirect
+	golang.org/x/text v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20220126215142-9970aeb2e350 // indirect
 )
